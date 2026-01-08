@@ -117,7 +117,11 @@ class IncidentPage {
     try {
       if ((await btn.count()) > 0) {
         const isVisibleNow = await btn.isVisible().catch(() => false);
-        if (isVisibleNow) { await btn.click({ timeout: 2000 }); return; }
+        if (isVisibleNow) {
+          await btn.click({ timeout: 2000 });
+          await this._selectEngineeringOption().catch(() => {});
+          return;
+        }
       }
     } catch (err) {
       // ignore and continue to 5s attempt
@@ -131,6 +135,7 @@ class IncidentPage {
       const menuItem = this.page.getByText(/Create bridge/i).first();
       await menuItem.waitFor({ state: 'visible', timeout: 5000 });
       await menuItem.click({ timeout: 2000 });
+      await this._selectEngineeringOption().catch(() => {});
       return;
     } catch (err) {
       // fallback: try other More selectors within 5s window
@@ -159,6 +164,7 @@ class IncidentPage {
         if ((await menuItem.count()) > 0) {
           await menuItem.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
           await menuItem.click({ timeout: 2000 }).catch(() => {});
+          await this._selectEngineeringOption().catch(() => {});
           return;
         }
       } catch (err) {
@@ -168,6 +174,37 @@ class IncidentPage {
 
     // No long fallback — fail fast if not found within quick attempts
     throw new Error('Create bridge not found after quick attempts');
+  }
+
+  // Wait for the collaboration form to appear and select the Engineering radio option
+  async _selectEngineeringOption() {
+    const heading = this.page.locator('text=/Create Collaboration Experience|Create Teams Collaboration|Create Collaboration/i').first();
+    await heading.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+
+    const engineeringRadio = this.page.getByRole('radio', { name: /Engineering/i }).first();
+    if ((await engineeringRadio.count()) > 0) {
+      await engineeringRadio.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+      await engineeringRadio.click({ timeout: 2000 }).catch(() => {});
+      try {
+        const checked = await engineeringRadio.isChecked();
+        if (!checked) {
+          const label = this.page.getByText(/Engineering/i).first();
+          if ((await label.count()) > 0) await label.click({ timeout: 2000 }).catch(() => {});
+        }
+      } catch (e) {
+        // ignore
+      }
+      return;
+    }
+
+    const labelText = this.page.getByText(/Engineering/i).first();
+    if ((await labelText.count()) > 0) {
+      await labelText.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+      await labelText.click({ timeout: 2000 }).catch(() => {});
+      return;
+    }
+
+    throw new Error('Engineering option not found in collaboration form');
   }
 }
 
