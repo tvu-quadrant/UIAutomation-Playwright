@@ -194,6 +194,8 @@ class IncidentPage {
       } catch (e) {
         // ignore
       }
+      // visual pause so user can see the selection
+      await this.page.waitForTimeout(2000);
       return;
     }
 
@@ -201,6 +203,8 @@ class IncidentPage {
     if ((await labelText.count()) > 0) {
       await labelText.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
       await labelText.click({ timeout: 2000 }).catch(() => {});
+      // visual pause so user can see the selection
+      await this.page.waitForTimeout(2000);
       return;
     }
 
