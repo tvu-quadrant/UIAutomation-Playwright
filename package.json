@@ -1,0 +1,13 @@
+{
+  "name": "uiautomation-playwright",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "pwsh -c \"npx playwright test --debug\""
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.38.0"
+  }
+}
