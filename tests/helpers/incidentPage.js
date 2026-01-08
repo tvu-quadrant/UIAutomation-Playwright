@@ -112,8 +112,62 @@ class IncidentPage {
 
   async clickCreateBridge() {
     const btn = this.page.locator('button:has-text("Create bridge")');
-    await btn.waitFor({ state: 'visible', timeout: 10000 });
-    await btn.click();
+
+    // Quick immediate check: if visible now, click it (fast path)
+    try {
+      if ((await btn.count()) > 0) {
+        const isVisibleNow = await btn.isVisible().catch(() => false);
+        if (isVisibleNow) { await btn.click({ timeout: 2000 }); return; }
+      }
+    } catch (err) {
+      // ignore and continue to 5s attempt
+    }
+
+    // If not immediately visible, within 5s try opening "More actions" and clicking "Create bridge"
+    try {
+      const moreRole = this.page.getByRole('button', { name: /More actions/i }).first();
+      await moreRole.waitFor({ state: 'visible', timeout: 5000 });
+      await moreRole.click({ timeout: 2000 });
+      const menuItem = this.page.getByText(/Create bridge/i).first();
+      await menuItem.waitFor({ state: 'visible', timeout: 5000 });
+      await menuItem.click({ timeout: 2000 });
+      return;
+    } catch (err) {
+      // fallback: try other More selectors within 5s window
+    }
+
+    const moreSelectors = [
+      'text=/More actions/i',
+      'button:has-text("More actions")',
+      'button:has-text("More")',
+      '[aria-label="More actions"]',
+      '[aria-label="More"]',
+      'button[title="More actions"]',
+      'button:has-text("...")',
+      '.more-actions'
+    ];
+
+    const start = Date.now();
+    for (const sel of moreSelectors) {
+      if (Date.now() - start > 5000) break; // only try for 5s total
+      const more = this.page.locator(sel).first();
+      if ((await more.count()) === 0) continue;
+      try {
+        await more.waitFor({ state: 'visible', timeout: 2000 });
+        await more.click({ timeout: 2000 });
+        const menuItem = this.page.locator('text=/Create bridge/i').first();
+        if ((await menuItem.count()) > 0) {
+          await menuItem.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
+          await menuItem.click({ timeout: 2000 }).catch(() => {});
+          return;
+        }
+      } catch (err) {
+        // try next selector within 5s
+      }
+    }
+
+    // No long fallback — fail fast if not found within quick attempts
+    throw new Error('Create bridge not found after quick attempts');
   }
 }
 

@@ -5,6 +5,7 @@
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",
+    "save-auth": "node ./scripts/save-ms-auth.js",
     "test:debug": "pwsh -c \"npx playwright test --debug\""
   },
   "devDependencies": {
