@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { IncidentPage } = require('./helpers/incidentPage');
 
-const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154847522';
+const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154881365';
 const AUTH_FILE = path.resolve(__dirname, '..', 'MSAuth.json');
 
 test('search incident and click Create bridge', async () => {
@@ -16,11 +16,15 @@ test('search incident and click Create bridge', async () => {
   let usedPage;
   let launchedBrowser = false;
 
+  // No OS-level helpers: rely on Playwright storage state and site behavior only
+
   // Authentication is read directly from MSAuth.json if present.
 
   if (fs.existsSync(AUTH_FILE)) {
-    // Launch Edge with stored auth state
-    browser = await chromium.launch({ channel: 'msedge', headless: false });
+    // Launch Edge and create a new context using saved Playwright storage state so
+    // the session from `MSAuth.json` is restored (no interactive login required).
+    const browserLaunchOptions = { channel: 'msedge', headless: false };
+    browser = await chromium.launch(browserLaunchOptions);
     context = await browser.newContext({ storageState: AUTH_FILE });
     usedPage = await context.newPage();
     launchedBrowser = true;
@@ -37,12 +41,13 @@ test('search incident and click Create bridge', async () => {
 
   const incident = new IncidentPage(usedPage);
 
+  // Give the ESC helper a moment to run as navigation may trigger the OS dialog
   await incident.gotoSearch();
   await incident.searchIncident(INCIDENT_NUMBER);
   await incident.waitForDetails(INCIDENT_NUMBER);
   await incident.clickCreateBridge();
   await usedPage.waitForTimeout(2000);
 
-  if (launchedBrowser && browser) await browser.close();
+  // Intentionally keep the browser/context open for manual inspection per user request.
 });
 
