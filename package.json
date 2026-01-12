@@ -9,6 +9,12 @@
     "test:debug": "pwsh -c \"npx playwright test --debug\""
   },
   "devDependencies": {
-    "@playwright/test": "^1.38.0"
+    "@playwright/test": "^1.57.0"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.13.0",
+    "@azure/keyvault-secrets": "^4.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }
