@@ -2,9 +2,10 @@ const { test } = require('@playwright/test');
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const { IncidentPage } = require('./helpers/incidentPage');
 
-const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154881365';
+const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154880886';
 const AUTH_FILE = path.resolve(__dirname, '..', 'MSAuth.json');
 
 test('search incident and click Create bridge', async () => {
@@ -45,7 +46,13 @@ test('search incident and click Create bridge', async () => {
   await incident.gotoSearch();
   await incident.searchIncident(INCIDENT_NUMBER);
   await incident.waitForDetails(INCIDENT_NUMBER);
-  await incident.clickCreateBridge();
+
+  const result = await incident.clickCreateBridge();
+  if (result && result.alreadyCreated) {
+    console.log(result.message);
+  } else {
+    console.log(result?.message || 'Bridge created successfully');
+  }
   await usedPage.waitForTimeout(2000);
 
   // Intentionally keep the browser/context open for manual inspection per user request.

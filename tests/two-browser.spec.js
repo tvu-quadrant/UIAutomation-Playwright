@@ -17,7 +17,7 @@ test('two-browser: copy Bridge Name to Discussion', async () => {
         return;
     }
 
-    // Launch two browser instances with shared authentication
+    // Launch two Edge browser instances with shared authentication
     const browserLaunchOptions = { channel: 'msedge', headless: false };
 
     const browser1 = await chromium.launch(browserLaunchOptions);
