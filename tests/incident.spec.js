@@ -5,7 +5,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const { IncidentPage } = require('./helpers/incidentPage');
 
-const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154880886';
+const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154880884';
 const AUTH_FILE = path.resolve(__dirname, '..', 'MSAuth.json');
 
 test('search incident and click Create bridge', async () => {

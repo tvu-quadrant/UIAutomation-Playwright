@@ -145,7 +145,7 @@ class IncidentPage {
     console.log('"Create bridge" not directly visible, trying "More actions" menu');
     try {
       const moreRole = this.page.getByRole('button', { name: /More actions/i }).first();
-      await moreRole.waitFor({ state: 'visible', timeout: 5000 });
+      await moreRole.waitFor({ state: 'visible', timeout: 2000 });
       await moreRole.click({ timeout: 2000 });
 
       // Check if "Create bridge" is in the menu
