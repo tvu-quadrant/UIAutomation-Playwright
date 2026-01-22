@@ -133,8 +133,7 @@ class IncidentPage {
         if (isVisibleNow) {
           console.log('Found direct "Create bridge" button, clicking it');
           await directBtn.click({ timeout: 2000 });
-          await this._selectEngineeringOption().catch(() => { });
-          return { alreadyCreated: false, message: 'Bridge created successfully' };
+          return { alreadyCreated: false, message: 'Create bridge dialog opened' };
         }
       }
     } catch (err) {
@@ -162,8 +161,7 @@ class IncidentPage {
       }
 
       await menuItem.click({ timeout: 2000 });
-      await this._selectEngineeringOption().catch(() => { });
-      return { alreadyCreated: false, message: 'Bridge created successfully' };
+      return { alreadyCreated: false, message: 'Create bridge dialog opened' };
     } catch (err) {
       // fallback: try other More selectors within 5s window
     }
@@ -192,8 +190,7 @@ class IncidentPage {
           const isMenuItemVisible = await menuItem.isVisible().catch(() => false);
           if (isMenuItemVisible) {
             await menuItem.click({ timeout: 2000 }).catch(() => { });
-            await this._selectEngineeringOption().catch(() => { });
-            return { alreadyCreated: false, message: 'Bridge created successfully' };
+            return { alreadyCreated: false, message: 'Create bridge dialog opened' };
           }
         }
         // Create bridge not found in this menu - close and continue
@@ -206,6 +203,117 @@ class IncidentPage {
     // Create bridge not found after all attempts - bridge may already exist
     console.log('This ticket is already created bridge');
     return { alreadyCreated: true, message: 'This ticket is already created bridge' };
+  }
+
+  // Wait for the collaboration form to appear and select the Engineering radio option
+  async selectEngineeringOption() {
+    const heading = this.page.locator('text=/Create Collaboration Experience|Create Teams Collaboration|Create Collaboration/i').first();
+    await heading.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
+
+    // First, ensure the left tab 'Create Teams Collaboration' is selected (tab text present)
+    try {
+      const tab = this.page.locator('span.ms-Pivot-text', { hasText: 'Create Teams Collaboration' }).first();
+      if ((await tab.count()) > 0) {
+        await tab.click({ timeout: 1000 }).catch(() => { });
+      }
+    } catch (e) { }
+
+    // Try multiple strategies to select Engineering
+    const strategies = [
+      async () => {
+        const radio = this.page.getByRole('radio', { name: /Engineering/i }).first();
+        if ((await radio.count()) === 0) return false;
+        await radio.waitFor({ state: 'visible', timeout: 2000 }).catch(() => { });
+        try { await radio.click({ timeout: 1500 }); } catch (e) { }
+        const checked = await radio.isChecked().catch(() => false);
+        if (checked) return true;
+        // fallback: click nearby label
+        const lbl = this.page.getByText(/Engineering/i).first();
+        if ((await lbl.count()) > 0) {
+          try { await lbl.click({ timeout: 1500 }); } catch (e) { }
+          const checked2 = await radio.isChecked().catch(() => false);
+          if (checked2) return true;
+        }
+        return false;
+      },
+      async () => {
+        const lbl = this.page.locator('label:has-text("Engineering")').first();
+        if ((await lbl.count()) === 0) return false;
+        await lbl.waitFor({ state: 'visible', timeout: 2000 }).catch(() => { });
+        try {
+          const box = await lbl.boundingBox().catch(() => null);
+          if (box) await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { delay: 40 });
+          else await lbl.click({ timeout: 1200 });
+        } catch (e) { }
+        return true;
+      },
+      async () => {
+        // Try direct input id if known
+        const inputById = this.page.locator('#ChoiceGroup429-Engineering').first();
+        if ((await inputById.count()) > 0) {
+          try { await inputById.click({ timeout: 1200 }); } catch (e) { }
+          return true;
+        }
+
+        const lblText = this.page.getByText(/Engineering/i).first();
+        if ((await lblText.count()) === 0) return false;
+        try { await lblText.click({ timeout: 1200 }); } catch (e) { }
+        return true;
+      }
+    ];
+
+    let selected = false;
+    for (const s of strategies) {
+      try { selected = await s(); } catch (e) { selected = false; }
+      if (selected) break;
+      await this.page.waitForTimeout(200);
+    }
+
+    if (!selected) throw new Error('Engineering option not found in collaboration form');
+    console.log('Engineering option selected');
+  }
+
+  // Click the Save button in the Create Bridge form
+  async clickSaveButton() {
+    const saveSelectors = [
+      'button:has-text("Save")',
+      'button[type="submit"]:has-text("Save")',
+      '[data-automation-id="save-button"]',
+      'button.ms-Button--primary:has-text("Save")',
+      'text=/^Save$/i'
+    ];
+
+    let saveClicked = false;
+    for (const sel of saveSelectors) {
+      const saveBtn = this.page.locator(sel).first();
+      if ((await saveBtn.count()) > 0) {
+        try {
+          await saveBtn.waitFor({ state: 'visible', timeout: 2000 });
+          await saveBtn.click({ timeout: 2000 });
+          saveClicked = true;
+          console.log('Clicked Save button');
+          break;
+        } catch (e) {
+          // try next selector
+        }
+      }
+    }
+
+    if (!saveClicked) {
+      // Try by role as fallback
+      try {
+        const saveByRole = this.page.getByRole('button', { name: /Save/i }).first();
+        if ((await saveByRole.count()) > 0) {
+          await saveByRole.click({ timeout: 2000 });
+          saveClicked = true;
+          console.log('Clicked Save button via role');
+        }
+      } catch (e) { }
+    }
+
+    if (!saveClicked) {
+      throw new Error('Save button not found');
+    }
   }
 
   // Wait for the collaboration form to appear and select the Engineering radio option

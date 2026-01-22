@@ -9,17 +9,39 @@ const path = require('path');
 
   // Option 1: Connect to existing Edge via CDP if EDGE_CDP_PORT is set
   const cdpPort = process.env.EDGE_CDP_PORT || process.env.EDGE_REMOTE_DEBUGGING_PORT;
+  const cdpUrlFromEnv = process.env.EDGE_CDP_URL;
 
   if (cdpPort) {
     console.log(`Connecting to existing Edge on port ${cdpPort}...`);
     try {
-      browser = await chromium.connectOverCDP(`http://localhost:${cdpPort}`);
-      context = browser.contexts()[0] || await browser.newContext();
+      const candidates = [
+        cdpUrlFromEnv,
+        `http://127.0.0.1:${cdpPort}`,
+        `http://localhost:${cdpPort}`,
+      ].filter(Boolean);
+
+      let lastErr;
+      for (const url of candidates) {
+        try {
+          browser = await chromium.connectOverCDP(url);
+          context = browser.contexts()[0] || await browser.newContext();
+          console.log(`Connected via CDP: ${url}`);
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      if (!browser || !context) {
+        throw lastErr || new Error('Could not connect to Edge via CDP');
+      }
     } catch (e) {
       console.error('Failed to connect to Edge via CDP:', e.message);
       console.log('\nTo use an existing Edge session, start Edge with remote debugging:');
-      console.log('  msedge.exe --remote-debugging-port=9222');
+      console.log('  msedge.exe --remote-debugging-port=9222 --user-data-dir=C:\\tmp\\edge-debug-profile');
       console.log('\nThen set EDGE_CDP_PORT=9222 and run this script again.');
+      console.log('If localhost fails, try setting EDGE_CDP_URL=http://127.0.0.1:9222');
       process.exit(1);
     }
   } else {

@@ -3,12 +3,18 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-// Incident numbers for the two browsers
-const SOURCE_INCIDENT = process.env.SOURCE_INCIDENT || '154887209';
-const TARGET_INCIDENT = process.env.TARGET_INCIDENT || '154887055';
+// Load env defaults for local runs
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const AUTH_FILE = path.resolve(__dirname, '..', 'MSAuth.json');
 
 test('two-browser: copy Bridge Name to Discussion', async () => {
+    // Reload .env on each run so SOURCE/TARGET can be changed without restarting
+    require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), override: true });
+
+    // Incident numbers for the two browsers
+    const SOURCE_INCIDENT = process.env.SOURCE_INCIDENT || '154887209';
+    const TARGET_INCIDENT = process.env.TARGET_INCIDENT || '154887055';
+
     // Allow enough time for both browsers to complete
     test.setTimeout(300000);
 
@@ -52,8 +58,10 @@ test('two-browser: copy Bridge Name to Discussion', async () => {
             await menuItem.click({ timeout: 2000 });
         }
 
-        // Wait for collaboration form to appear
-        await page1.waitForTimeout(1000);
+        // Wait for collaboration form to appear and settle
+        const dialogHeading = page1.locator('text=/Create Collaboration Experience|Create Teams Collaboration|Create Collaboration/i').first();
+        await dialogHeading.waitFor({ state: 'visible', timeout: 15000 });
+        await page1.waitForTimeout(3000);
 
         // Click Engineering option
         console.log('Browser 1: Selecting Engineering option...');
@@ -67,12 +75,19 @@ test('two-browser: copy Bridge Name to Discussion', async () => {
             await engineeringLabel.click({ timeout: 2000 }).catch(() => { });
         }
 
+        // Give the UI time to auto-fill after selecting Engineering
+        await page1.waitForTimeout(2000);
+
         // Wait for Bridge Name field to be auto-filled
         console.log('Browser 1: Waiting for Bridge Name to auto-fill...');
-        const bridgeNameInput = page1.locator('input[aria-label="Bridge Name"]');
+        const bridgeNameInput = page1
+            .locator('input[aria-label*="Bridge" i], input[name*="bridge" i], input[placeholder*="Bridge" i]')
+            .first();
+
+        await bridgeNameInput.waitFor({ state: 'visible', timeout: 15000 }).catch(() => { });
 
         // Poll until Bridge Name has a value
-        const maxWait = 10000;
+        const maxWait = 30000;
         const start = Date.now();
         while (Date.now() - start < maxWait) {
             bridgeName = await bridgeNameInput.inputValue().catch(() => '');
@@ -83,6 +98,7 @@ test('two-browser: copy Bridge Name to Discussion', async () => {
         }
 
         if (!bridgeName) {
+            await page1.screenshot({ path: 'test-results/two-browser-bridge-name-missing.png', fullPage: true }).catch(() => { });
             throw new Error('Bridge Name was not auto-filled');
         }
         console.log(`Browser 1: Got Bridge Name: "${bridgeName}"`);
@@ -91,83 +107,128 @@ test('two-browser: copy Bridge Name to Discussion', async () => {
         console.log(`Browser 2: Navigating to incident ${TARGET_INCIDENT}...`);
         await page2.goto(`https://ppeportal.microsofticm.com/imp/v5/incidents/details/${TARGET_INCIDENT}/summary`, { waitUntil: 'networkidle' });
 
-        // Wait for page to fully load
-        await page2.waitForTimeout(2000);
+        // Wait for form to fully load (per request)
+        await page2.waitForTimeout(3000);
 
-        // Find the Discussion section and click to expand/edit
-        console.log('Browser 2: Looking for Discussion textbox...');
+        // Find the Discussion editor by id and type the Bridge Name into it
+        console.log('Browser 2: Looking for Discussion editor (#NewDiscussionEditor)...');
 
-        // Try multiple selectors for the Discussion area
-        const discussionSelectors = [
-            'textarea[aria-label*="Discussion" i]',
-            'div[aria-label*="Discussion" i] textarea',
-            'textarea[placeholder*="discussion" i]',
-            '[data-automation-id="discussion-input"]',
-            'div.discussion-editor textarea',
-            'textarea'
-        ];
+        const editorRoot = page2.locator('#NewDiscussionEditor').first();
+        const hasEditorRoot = (await editorRoot.count().catch(() => 0)) > 0;
 
+        // Primary path: use the known id
         let discussionInput = null;
-        for (const sel of discussionSelectors) {
-            const element = page2.locator(sel).first();
-            if (await element.count() > 0 && await element.isVisible().catch(() => false)) {
-                discussionInput = element;
-                console.log(`Browser 2: Found Discussion input with selector: ${sel}`);
-                break;
+        let discussionScope = page2;
+
+        if (hasEditorRoot) {
+            await editorRoot.waitFor({ state: 'visible', timeout: 15000 });
+            await editorRoot.scrollIntoViewIfNeeded().catch(() => { });
+
+            // The id might be on the editable element itself or on a wrapper
+            const scopedCandidates = [
+                editorRoot.locator('div[role="textbox"][contenteditable="true"]').first(),
+                editorRoot.locator('[contenteditable="true"]').first(),
+                editorRoot.locator('textarea').first(),
+                editorRoot,
+            ];
+
+            for (const candidate of scopedCandidates) {
+                if ((await candidate.count()) > 0 && (await candidate.isVisible().catch(() => false))) {
+                    discussionInput = candidate;
+                    break;
+                }
+            }
+
+            // Scope Save/Cancel lookup to the closest container that has the Save button
+            const containerWithSave = editorRoot.locator('xpath=ancestor::*[self::div or self::section][.//button[@title="Save"]][1]').first();
+            if ((await containerWithSave.count().catch(() => 0)) > 0) {
+                discussionScope = containerWithSave;
+            } else {
+                discussionScope = editorRoot;
             }
         }
 
-        // If no textarea, look for a contenteditable div or try clicking Discussion header first
+        // Fallback path if the id is missing for some reason
         if (!discussionInput) {
-            // Try clicking the Discussion section header to reveal input
-            const discussionHeader = page2.locator('text=/Discussion/i').first();
-            if (await discussionHeader.count() > 0) {
-                await discussionHeader.click({ timeout: 2000 }).catch(() => { });
-                await page2.waitForTimeout(1000);
-            }
+            console.log('Browser 2: #NewDiscussionEditor not found; falling back to heuristic editor search...');
+            const piiWarning = page2.getByText(/Do not enter personally identifiable information/i).first();
+            await piiWarning.waitFor({ state: 'visible', timeout: 15000 }).catch(() => { });
+            const discussionRegion = (await piiWarning.isVisible().catch(() => false))
+                ? piiWarning.locator('xpath=ancestor::*[self::div or self::section][1]')
+                : null;
+            discussionScope = discussionRegion || page2;
 
-            // Now look for textarea or contenteditable
-            const textarea = page2.locator('textarea').first();
-            if (await textarea.count() > 0 && await textarea.isVisible().catch(() => false)) {
-                discussionInput = textarea;
-            } else {
-                // Try contenteditable div
-                const contentEditable = page2.locator('[contenteditable="true"]').first();
-                if (await contentEditable.count() > 0) {
-                    discussionInput = contentEditable;
+            const discussionCandidates = discussionRegion
+                ? [
+                    discussionRegion.locator('div[role="textbox"][contenteditable="true"]').first(),
+                    discussionRegion.locator('[contenteditable="true"]').first(),
+                    discussionRegion.locator('textarea').first(),
+                ]
+                : [
+                    page2.getByRole('textbox', { name: /Discussion/i }).first(),
+                    page2.locator('[aria-label*="Discussion" i][contenteditable="true"]').first(),
+                    page2.locator('div[role="textbox"][contenteditable="true"]').first(),
+                    page2.locator('[contenteditable="true"]').first(),
+                    page2.locator('textarea[aria-label*="Discussion" i]').first(),
+                    page2.locator('textarea').first()
+                ];
+
+            for (const candidate of discussionCandidates) {
+                if ((await candidate.count()) > 0 && (await candidate.isVisible().catch(() => false))) {
+                    discussionInput = candidate;
+                    break;
                 }
             }
         }
 
         if (!discussionInput) {
-            throw new Error('Could not find Discussion input field');
+            await page2.screenshot({ path: 'test-results/two-browser-discussion-missing.png', fullPage: true }).catch(() => { });
+            throw new Error('Could not find Discussion editor');
         }
 
-        // Type the bridge name into the Discussion field
-        console.log(`Browser 2: Typing Bridge Name into Discussion: "${bridgeName}"`);
-        await discussionInput.click({ timeout: 2000 });
-        await discussionInput.fill(bridgeName);
+        console.log(`Browser 2: Pasting Bridge Name into Discussion: "${bridgeName}"`);
+        await discussionInput.click({ timeout: 10000 });
+        const isEditable = await discussionInput.evaluate(el => !!el.isContentEditable).catch(() => false);
+        const tagName = await discussionInput.evaluate(el => el.tagName.toLowerCase()).catch(() => '');
 
-        // Wait a moment to see the input
-        await page2.waitForTimeout(1000);
-
-        // Click Save button
-        console.log('Browser 2: Clicking Save button...');
-        const saveBtn = page2.locator('button:has-text("Save"), [aria-label="Save"]').first();
-
-        if (await saveBtn.count() > 0) {
-            await saveBtn.click({ timeout: 2000 });
-            console.log('Browser 2: Clicked Save button');
+        if (isEditable) {
+            await page2.keyboard.press('Control+A');
+            await page2.keyboard.type(bridgeName, { delay: 10 });
+        } else if (tagName === 'textarea' || tagName === 'input') {
+            await discussionInput.fill(bridgeName);
         } else {
-            // Try finding save by role
-            const saveByRole = page2.getByRole('button', { name: /Save/i }).first();
-            if (await saveByRole.count() > 0) {
-                await saveByRole.click({ timeout: 2000 });
-                console.log('Browser 2: Clicked Save button via role');
-            } else {
-                console.log('Browser 2: Save button not found');
-            }
+            await discussionInput.evaluate((el, value) => {
+                el.textContent = value;
+                el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }, bridgeName).catch(() => { });
         }
+
+        // Click outside to ensure UI registers change
+        await page2.keyboard.press('Tab').catch(() => { });
+
+        // Wait 2s after typing so Save becomes visible (per request)
+        await page2.waitForTimeout(2000);
+
+        // Find the Save button as described: type="button" title="Save" (bottom-right of the Discussion editor)
+        console.log('Browser 2: Waiting for Save button (type=button, title=Save) to become visible...');
+        const saveBtn = discussionScope.locator('button[type="button"][title="Save"]').first();
+
+        const startSaveWait = Date.now();
+        while (Date.now() - startSaveWait < 30000) {
+            const visible = await saveBtn.isVisible().catch(() => false);
+            const enabled = await saveBtn.isEnabled().catch(() => false);
+            if (visible && enabled) break;
+            await page2.waitForTimeout(250);
+        }
+
+        if (!(await saveBtn.isVisible().catch(() => false)) || !(await saveBtn.isEnabled().catch(() => false))) {
+            await page2.screenshot({ path: 'test-results/two-browser-save-not-clickable.png', fullPage: true }).catch(() => { });
+            throw new Error('Save button (type=button, title=Save) did not become visible + enabled after editing Discussion');
+        }
+
+        await saveBtn.click({ timeout: 10000 });
+        console.log('Browser 2: Clicked Save button');
 
         // Wait for save to complete
         await page2.waitForTimeout(3000);

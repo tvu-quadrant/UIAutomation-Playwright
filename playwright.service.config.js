@@ -1,4 +1,5 @@
 const { defineConfig } = require('@playwright/test');
+//require('dotenv').config();
 const { createAzurePlaywrightConfig, ServiceOS } = require('@azure/playwright');
 const { DefaultAzureCredential } = require('@azure/identity');
 const config = require('./playwright.config');

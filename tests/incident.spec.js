@@ -5,10 +5,12 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const { IncidentPage } = require('./helpers/incidentPage');
 
-const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154880884';
 const AUTH_FILE = path.resolve(__dirname, '..', 'MSAuth.json');
 
 test('search incident and click Create bridge', async () => {
+  // Load .env fresh and get INCIDENT_NUMBER
+  require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), override: true });
+  const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154880884';
   // Allow manual sign-in to complete (up to 10 minutes)
   test.setTimeout(600000);
 
@@ -21,7 +23,13 @@ test('search incident and click Create bridge', async () => {
 
   // Authentication is read directly from MSAuth.json if present.
 
-  if (fs.existsSync(AUTH_FILE)) {
+  if (process.env.EDGE_CDP_PORT || process.env.EDGE_CDP_URL || process.env.EDGE_REMOTE_DEBUGGING_PORT) {
+    const port = process.env.EDGE_CDP_PORT || process.env.EDGE_REMOTE_DEBUGGING_PORT;
+    const cdpUrl = process.env.EDGE_CDP_URL || `http://localhost:${port}`;
+    browser = await chromium.connectOverCDP(cdpUrl);
+    context = browser.contexts()[0] || await browser.newContext();
+    usedPage = await context.newPage();
+  } else if (fs.existsSync(AUTH_FILE)) {
     // Launch Edge and create a new context using saved Playwright storage state so
     // the session from `MSAuth.json` is restored (no interactive login required).
     const browserLaunchOptions = { channel: 'msedge', headless: false };
@@ -29,12 +37,6 @@ test('search incident and click Create bridge', async () => {
     context = await browser.newContext({ storageState: AUTH_FILE });
     usedPage = await context.newPage();
     launchedBrowser = true;
-  } else if (process.env.EDGE_CDP_PORT || process.env.EDGE_CDP_URL || process.env.EDGE_REMOTE_DEBUGGING_PORT) {
-    const port = process.env.EDGE_CDP_PORT || process.env.EDGE_REMOTE_DEBUGGING_PORT;
-    const cdpUrl = process.env.EDGE_CDP_URL || `http://localhost:${port}`;
-    browser = await chromium.connectOverCDP(cdpUrl);
-    context = browser.contexts()[0] || await browser.newContext();
-    usedPage = await context.newPage();
   } else {
     test.skip(true, 'No MSAuth.json and no EDGE_CDP_PORT set. Run `npm run save-auth` to store auth or start Edge with remote debugging.');
     return;
@@ -47,11 +49,25 @@ test('search incident and click Create bridge', async () => {
   await incident.searchIncident(INCIDENT_NUMBER);
   await incident.waitForDetails(INCIDENT_NUMBER);
 
+  // Click Create Bridge
   const result = await incident.clickCreateBridge();
   if (result && result.alreadyCreated) {
     console.log(result.message);
   } else {
-    console.log(result?.message || 'Bridge created successfully');
+    // Wait 3 seconds for form to load
+    console.log('Waiting 3 seconds for Create Bridge form to load...');
+    await usedPage.waitForTimeout(3000);
+
+    // Select Engineering option
+    await incident.selectEngineeringOption();
+
+    // Wait 2 seconds
+    console.log('Waiting 2 seconds before clicking Save...');
+    await usedPage.waitForTimeout(2000);
+
+    // Click Save button
+    await incident.clickSaveButton();
+    console.log('Bridge creation flow completed successfully');
   }
   await usedPage.waitForTimeout(2000);
 
