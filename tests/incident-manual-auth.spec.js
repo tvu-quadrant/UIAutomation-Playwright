@@ -4,7 +4,97 @@ const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
+
+const { IncidentPage } = require('./helpers/incidentPage');
+
 const OVERVIEW_URL = 'https://ppeportal.microsofticm.com/imp/v3/overview/main';
+
+function urlsMatchOverview(url) {
+  if (!url) return false;
+  return url.startsWith('https://ppeportal.microsofticm.com/imp/v3/overview/main');
+}
+
+function urlsMatchIncidentDetails(url, incidentNumber) {
+  if (!url) return false;
+  return url.includes(`/imp/v3/incidents/details/${encodeURIComponent(String(incidentNumber))}/`);
+}
+
+async function waitForIncidentDetailsInAnyPage(context, initialPage, incidentNumber, timeoutMs) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const pages = context.pages().filter(p => !p.isClosed());
+
+    for (const p of pages) {
+      const url = p.url();
+      if (urlsMatchIncidentDetails(url, incidentNumber)) {
+        return p;
+      }
+    }
+
+    if (initialPage && !initialPage.isClosed() && urlsMatchIncidentDetails(initialPage.url(), incidentNumber)) {
+      return initialPage;
+    }
+
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  const openUrls = context
+    .pages()
+    .filter(p => !p.isClosed())
+    .map(p => p.url());
+
+  throw new Error(
+    [
+      'Timed out waiting for the incident details page to load.',
+      `Expected details URL to contain: /imp/v3/incidents/details/${incidentNumber}/`,
+      '',
+      'Last open page URLs:',
+      ...openUrls.map(u => `- ${u}`),
+    ].join('\n')
+  );
+}
+
+async function waitForOverviewAfterLogin(context, initialPage, timeoutMs) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const pages = context.pages().filter(p => !p.isClosed());
+
+    for (const p of pages) {
+      const url = p.url();
+      if (urlsMatchOverview(url)) {
+        return p;
+      }
+    }
+
+    // If the initial page got redirected and is still open, prefer it.
+    if (initialPage && !initialPage.isClosed() && urlsMatchOverview(initialPage.url())) {
+      return initialPage;
+    }
+
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  const openUrls = context
+    .pages()
+    .filter(p => !p.isClosed())
+    .map(p => p.url());
+
+  throw new Error(
+    [
+      'Timed out waiting for Microsoft Entra sign-in to complete.',
+      `Expected redirect back to: ${OVERVIEW_URL}`,
+      '',
+      'Last open page URLs:',
+      ...openUrls.map(u => `- ${u}`),
+      '',
+      'If login requires user interaction, complete it in the opened browser window.',
+      'You can increase the wait using MANUAL_AUTH_WAIT_MS (e.g., 600000 for 10 minutes).',
+    ].join('\n')
+  );
+}
 
 function getBrowserName() {
   const raw = (process.env.BROWSER || process.env.BROWSER_NAME || '').trim().toLowerCase();
@@ -241,36 +331,79 @@ async function connectOrStartCdpSession() {
   );
 }
 
-test('manual auth: open IcM overview (browser profile)', async () => {
+test('manual auth: incident create bridge flow (no MSAuth.json)', async () => {
   // Give plenty of time for manual passwordless/MFA
   test.setTimeout(15 * 60 * 1000);
+
+  // Load .env fresh and get INCIDENT_NUMBER
+  require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), override: true });
+  const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154880884';
 
   const manualWaitMs = Number(process.env.MANUAL_AUTH_WAIT_MS || 10 * 60 * 1000);
 
   const browserName = getBrowserName();
-  const userDataDir = getDefaultUserDataDir(browserName);
+  const defaultUserDataDir = getDefaultUserDataDir(browserName);
   console.log(`Browser: ${browserName}`);
-  console.log(`Default profile dir (if not overridden): ${userDataDir || '(unknown)'}`);
+  console.log(`Default profile dir (if not overridden): ${defaultUserDataDir || '(unknown)'}`);
 
   const { browser, context, url } = await connectOrStartCdpSession();
   const page = context.pages()[0] || (await context.newPage());
 
   console.log(`Connected via CDP: ${url}`);
-  console.log('Navigating to IcM overview:', OVERVIEW_URL);
-  console.log('If redirected to Microsoft Entra sign-in, complete passwordless/MFA in the opened browser window.');
 
   page.on('close', () => {
     console.log('Active tab was closed (SSO flow may open a new tab/window).');
   });
   browser.on('disconnected', () => {
-    console.log('CDP browser disconnected (Edge may have exited).');
+    console.log('CDP browser disconnected (browser may have exited).');
   });
 
+  // Step 1: Navigate to overview to trigger Microsoft Entra sign-in.
+  console.log('Navigating to IcM overview:', OVERVIEW_URL);
+  console.log('If redirected to Microsoft Entra sign-in, complete passwordless/MFA in the opened browser window.');
   await page.goto(OVERVIEW_URL, { waitUntil: 'domcontentloaded' });
 
-  // Keep the session open for manual sign-in / inspection.
-  // Use a Node timer rather than page.waitForTimeout so the test doesn't fail if the active tab is closed by SSO.
-  await new Promise(r => setTimeout(r, manualWaitMs));
+  // Step 1b: Block until sign-in completes and we are redirected back to the overview page.
+  const signedInPage = await waitForOverviewAfterLogin(context, page, manualWaitMs);
+  if (signedInPage !== page) {
+    console.log('Detected overview page in a different tab/window; continuing from that page.');
+  }
 
-  // Intentionally do not close Edge here.
+  // Step 2: Run the same scenario as incident.spec.js (but without MSAuth.json).
+  const incident = new IncidentPage(signedInPage);
+
+  await incident.gotoSearch();
+  await incident.searchIncident(INCIDENT_NUMBER);
+
+  // SSO flows can close the active tab and open a new tab/window.
+  // Wait for the incident details page in *any* open tab, then continue there.
+  const detailsPage = await waitForIncidentDetailsInAnyPage(context, signedInPage, INCIDENT_NUMBER, 60_000);
+  if (detailsPage !== signedInPage) {
+    console.log('Detected incident details page in a different tab/window; continuing from that page.');
+  }
+
+  // Prefer a lightweight load state; networkidle can hang on pages with long-polling.
+  await detailsPage.waitForLoadState('domcontentloaded').catch(() => {});
+  await detailsPage.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+
+  const incidentOnDetails = new IncidentPage(detailsPage);
+
+  const result = await incidentOnDetails.clickCreateBridge();
+  if (result && result.alreadyCreated) {
+    console.log(result.message);
+  } else {
+    console.log('Waiting 3 seconds for Create Bridge form to load...');
+    await detailsPage.waitForTimeout(3000);
+
+    await incidentOnDetails.selectEngineeringOption();
+
+    console.log('Waiting 2 seconds before clicking Save...');
+    await detailsPage.waitForTimeout(2000);
+
+    await incidentOnDetails.clickSaveButton();
+    console.log('Bridge creation flow completed successfully');
+  }
+
+  // Keep the session open for manual inspection.
+  await new Promise(r => setTimeout(r, manualWaitMs));
 });
