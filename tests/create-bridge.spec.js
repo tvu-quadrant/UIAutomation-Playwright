@@ -24,20 +24,35 @@ test('search incident and click Create bridge', async () => {
   let usedPage;
   let launchedBrowser = false;
 
+  const browserName = String(process.env.BROWSER || 'edge').trim().toLowerCase();
+  const launchChannel = browserName === 'chrome' ? 'chrome' : 'msedge';
+
   // No OS-level helpers: rely on Playwright storage state and site behavior only
 
   // Authentication is read directly from MSAuth.json if present.
 
-  if (process.env.EDGE_CDP_PORT || process.env.EDGE_CDP_URL || process.env.EDGE_REMOTE_DEBUGGING_PORT) {
-    const port = process.env.EDGE_CDP_PORT || process.env.EDGE_REMOTE_DEBUGGING_PORT;
-    const cdpUrl = process.env.EDGE_CDP_URL || `http://localhost:${port}`;
+  const cdpPort =
+    process.env.CDP_PORT ||
+    process.env.EDGE_CDP_PORT ||
+    process.env.EDGE_REMOTE_DEBUGGING_PORT ||
+    process.env.CHROME_CDP_PORT ||
+    process.env.CHROME_REMOTE_DEBUGGING_PORT;
+
+  const cdpUrlFromEnv =
+    process.env.CDP_URL ||
+    process.env.EDGE_CDP_URL ||
+    process.env.CHROME_CDP_URL;
+
+  if (cdpPort || cdpUrlFromEnv) {
+    const port = cdpPort || 9222;
+    const cdpUrl = cdpUrlFromEnv || `http://127.0.0.1:${port}`;
     browser = await chromium.connectOverCDP(cdpUrl);
     context = browser.contexts()[0] || await browser.newContext();
     usedPage = await context.newPage();
   } else if (fs.existsSync(AUTH_FILE)) {
     // Launch Edge and create a new context using saved Playwright storage state so
     // the session from `MSAuth.json` is restored (no interactive login required).
-    const browserLaunchOptions = { channel: 'msedge', headless: false };
+    const browserLaunchOptions = { channel: launchChannel, headless: false };
     browser = await chromium.launch(browserLaunchOptions);
     context = await browser.newContext({ storageState: AUTH_FILE });
     usedPage = await context.newPage();
@@ -72,9 +87,29 @@ test('search incident and click Create bridge', async () => {
 
   await gotoSearchWithRetry();
 
-  const incident = new IncidentPage(usedPage);
-  await incident.searchIncident(INCIDENT_NUMBER);
-  await incident.waitForDetails(INCIDENT_NUMBER);
+  const searchAndOpenDetailsWithRetry = async () => {
+    const runOnce = async () => {
+      const page = await ensureOpenPage();
+      const incident = new IncidentPage(page);
+      await incident.searchIncident(INCIDENT_NUMBER);
+      await incident.waitForDetails(INCIDENT_NUMBER);
+      return incident;
+    };
+
+    try {
+      return await runOnce();
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (msg.includes('has been closed')) {
+        console.log('Active tab closed during search; retrying with a new tab...');
+        await gotoSearchWithRetry();
+        return await runOnce();
+      }
+      throw e;
+    }
+  };
+
+  const incident = await searchAndOpenDetailsWithRetry();
 
   // Click Create Bridge
   const result = await incident.clickCreateBridge();
