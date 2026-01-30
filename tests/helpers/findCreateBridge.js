@@ -53,7 +53,9 @@ class IncidentPage {
           return;
         } catch (e) {
           // If landing input didn't appear, check for login inputs (shorter wait)
-          const loginInputsHandle = await this.page.waitForSelector('input[type="email"], input[name="loginfmt"], input[type="password"], input[name="passwd"]', { timeout: 15000 }).catch(() => null);
+          const loginInputsHandle = await this.page
+            .waitForSelector('input[type="email"], input[name="loginfmt"], input[type="password"], input[name="passwd"]', { timeout: 15000 })
+            .catch(() => null);
           if (loginInputsHandle) {
             console.log('Detected login form. Waiting for credentials to be entered...');
             try {
@@ -67,7 +69,11 @@ class IncidentPage {
               for (const s of submitSelectors) {
                 const el = this.page.locator(s).first();
                 if (await el.count() > 0) {
-                  try { await el.click({ timeout: 5000 }); } catch (err) { /* ignore */ }
+                  try {
+                    await el.click({ timeout: 5000 });
+                  } catch (err) {
+                    /* ignore */
+                  }
                   break;
                 }
               }
@@ -98,7 +104,9 @@ class IncidentPage {
   }
 
   async searchIncident(incidentNumber) {
-    const input = this.page.locator('input[aria-label="Incident search bar input"], input[name="searchText"], input[placeholder*="Search by incident ID" i]').first();
+    const input = this.page
+      .locator('input[aria-label="Incident search bar input"], input[name="searchText"], input[placeholder*="Search by incident ID" i]')
+      .first();
     await input.waitFor({ state: 'visible', timeout: 15000 });
     await input.click({ timeout: 5000 });
     await input.fill(String(incidentNumber));
@@ -117,8 +125,7 @@ class IncidentPage {
       if ((await joinBridgeBtn.count()) > 0) {
         const isVisible = await joinBridgeBtn.isVisible().catch(() => false);
         if (isVisible) {
-          console.log('This ticket is already created bridge');
-          return { alreadyCreated: true, message: 'This ticket is already created bridge' };
+          return { alreadyCreated: true, message: 'This incident is already created bridge' };
         }
       }
     } catch (err) {
@@ -156,8 +163,7 @@ class IncidentPage {
         console.log('Create bridge not found in More actions menu');
         // Close the menu by clicking elsewhere
         await this.page.keyboard.press('Escape').catch(() => { });
-        console.log('This ticket is already created bridge');
-        return { alreadyCreated: true, message: 'This ticket is already created bridge' };
+        return { alreadyCreated: true, message: 'This incident is already created bridge' };
       }
 
       await menuItem.click({ timeout: 2000 });
@@ -200,9 +206,8 @@ class IncidentPage {
       }
     }
 
-    // Create bridge not found after all attempts - bridge may already exist
-    console.log('This ticket is already created bridge');
-    return { alreadyCreated: true, message: 'This ticket is already created bridge' };
+    // Create bridge not found after all attempts - treat as already created
+    return { alreadyCreated: true, message: 'This incident is already created bridge' };
   }
 
   // Wait for the collaboration form to appear and select the Engineering radio option
@@ -224,13 +229,17 @@ class IncidentPage {
         const radio = this.page.getByRole('radio', { name: /Engineering/i }).first();
         if ((await radio.count()) === 0) return false;
         await radio.waitFor({ state: 'visible', timeout: 2000 }).catch(() => { });
-        try { await radio.click({ timeout: 1500 }); } catch (e) { }
+        try {
+          await radio.click({ timeout: 1500 });
+        } catch (e) { }
         const checked = await radio.isChecked().catch(() => false);
         if (checked) return true;
         // fallback: click nearby label
         const lbl = this.page.getByText(/Engineering/i).first();
         if ((await lbl.count()) > 0) {
-          try { await lbl.click({ timeout: 1500 }); } catch (e) { }
+          try {
+            await lbl.click({ timeout: 1500 });
+          } catch (e) { }
           const checked2 = await radio.isChecked().catch(() => false);
           if (checked2) return true;
         }
@@ -251,20 +260,28 @@ class IncidentPage {
         // Try direct input id if known
         const inputById = this.page.locator('#ChoiceGroup429-Engineering').first();
         if ((await inputById.count()) > 0) {
-          try { await inputById.click({ timeout: 1200 }); } catch (e) { }
+          try {
+            await inputById.click({ timeout: 1200 });
+          } catch (e) { }
           return true;
         }
 
         const lblText = this.page.getByText(/Engineering/i).first();
         if ((await lblText.count()) === 0) return false;
-        try { await lblText.click({ timeout: 1200 }); } catch (e) { }
+        try {
+          await lblText.click({ timeout: 1200 });
+        } catch (e) { }
         return true;
       }
     ];
 
     let selected = false;
     for (const s of strategies) {
-      try { selected = await s(); } catch (e) { selected = false; }
+      try {
+        selected = await s();
+      } catch (e) {
+        selected = false;
+      }
       if (selected) break;
       await this.page.waitForTimeout(200);
     }
@@ -316,6 +333,34 @@ class IncidentPage {
     }
   }
 
+  async waitForSuccessMessage(timeoutMs = 15_000) {
+    const selectors = [
+      '[role="alert"]:has-text("Success")',
+      '[role="status"]:has-text("Success")',
+      '.ms-MessageBar:has-text("Success")',
+      'text=/\\bSuccess\\b/i'
+    ];
+
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      for (const sel of selectors) {
+        const loc = this.page.locator(sel).first();
+        try {
+          if ((await loc.count()) > 0) {
+            const visible = await loc.isVisible().catch(() => false);
+            if (visible) return true;
+          }
+        } catch {
+          // ignore and keep trying
+        }
+      }
+
+      await this.page.waitForTimeout(250);
+    }
+
+    return false;
+  }
+
   // Wait for the collaboration form to appear and select the Engineering radio option
   async _selectEngineeringOption() {
     const heading = this.page.locator('text=/Create Collaboration Experience|Create Teams Collaboration|Create Collaboration/i').first();
@@ -349,13 +394,17 @@ class IncidentPage {
         const radio = this.page.getByRole('radio', { name: /Engineering/i }).first();
         if ((await radio.count()) === 0) return false;
         await radio.waitFor({ state: 'visible', timeout: 2000 }).catch(() => { });
-        try { await radio.click({ timeout: 1500 }); } catch (e) { }
+        try {
+          await radio.click({ timeout: 1500 });
+        } catch (e) { }
         const checked = await radio.isChecked().catch(() => false);
         if (checked) return true;
         // fallback: click nearby label
         const lbl = this.page.getByText(/Engineering/i).first();
         if ((await lbl.count()) > 0) {
-          try { await lbl.click({ timeout: 1500 }); } catch (e) { }
+          try {
+            await lbl.click({ timeout: 1500 });
+          } catch (e) { }
           const checked2 = await radio.isChecked().catch(() => false);
           if (checked2) return true;
         }
@@ -376,20 +425,28 @@ class IncidentPage {
         // Try direct input id if known
         const inputById = this.page.locator('#ChoiceGroup429-Engineering').first();
         if ((await inputById.count()) > 0) {
-          try { await inputById.click({ timeout: 1200 }); } catch (e) { }
+          try {
+            await inputById.click({ timeout: 1200 });
+          } catch (e) { }
           return true;
         }
 
         const lblText = this.page.getByText(/Engineering/i).first();
         if ((await lblText.count()) === 0) return false;
-        try { await lblText.click({ timeout: 1200 }); } catch (e) { }
+        try {
+          await lblText.click({ timeout: 1200 });
+        } catch (e) { }
         return true;
       }
     ];
 
     let selected = false;
     for (const s of strategies) {
-      try { selected = await s(); } catch (e) { selected = false; }
+      try {
+        selected = await s();
+      } catch (e) {
+        selected = false;
+      }
       if (selected) break;
       await this.page.waitForTimeout(200);
     }

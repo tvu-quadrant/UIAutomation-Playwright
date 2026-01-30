@@ -6,7 +6,7 @@ const path = require('path');
 
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
-const { IncidentPage } = require('./helpers/incidentPage');
+const { IncidentPage } = require('./helpers/findCreateBridge');
 
 const OVERVIEW_URL = 'https://ppeportal.microsofticm.com/imp/v3/overview/main';
 
@@ -369,7 +369,7 @@ test('manual auth: incident create bridge flow (no MSAuth.json)', async () => {
     console.log('Detected overview page in a different tab/window; continuing from that page.');
   }
 
-  // Step 2: Run the same scenario as incident.spec.js (but without MSAuth.json).
+  // Step 2: Run the same scenario as create-bridge.spec.js (but without MSAuth.json).
   const incident = new IncidentPage(signedInPage);
 
   await incident.gotoSearch();
@@ -390,7 +390,8 @@ test('manual auth: incident create bridge flow (no MSAuth.json)', async () => {
 
   const result = await incidentOnDetails.clickCreateBridge();
   if (result && result.alreadyCreated) {
-    console.log(result.message);
+    console.log(result.message || 'This incident is already created bridge');
+    return;
   } else {
     console.log('Waiting 3 seconds for Create Bridge form to load...');
     await detailsPage.waitForTimeout(3000);
@@ -401,7 +402,10 @@ test('manual auth: incident create bridge flow (no MSAuth.json)', async () => {
     await detailsPage.waitForTimeout(2000);
 
     await incidentOnDetails.clickSaveButton();
-    console.log('Bridge creation flow completed successfully');
+    const ok = await incidentOnDetails.waitForSuccessMessage(15_000);
+    if (!ok) throw new Error('Expected Success message after saving Create bridge');
+    console.log('Success');
+    return;
   }
 
   // Keep the session open for manual inspection.

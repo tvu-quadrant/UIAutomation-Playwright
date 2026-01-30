@@ -3,7 +3,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
-const { IncidentPage } = require('./helpers/incidentPage');
+const { IncidentPage } = require('./helpers/findCreateBridge');
 
 const AUTH_FILE = path.resolve(__dirname, '..', 'MSAuth.json');
 
@@ -42,17 +42,40 @@ test('search incident and click Create bridge', async () => {
     return;
   }
 
-  const incident = new IncidentPage(usedPage);
+  const ensureOpenPage = async () => {
+    if (usedPage && !usedPage.isClosed()) return usedPage;
+    if (!context) throw new Error('No browser context available to recover from closed page');
+    usedPage = await context.newPage();
+    return usedPage;
+  };
 
-  // Give the ESC helper a moment to run as navigation may trigger the OS dialog
-  await incident.gotoSearch();
+  const gotoSearchWithRetry = async () => {
+    // Give the ESC helper a moment to run as navigation may trigger the OS dialog
+    try {
+      await new IncidentPage(await ensureOpenPage()).gotoSearch();
+      return;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (msg.includes('has been closed')) {
+        console.log('Active tab closed during navigation; retrying with a new tab...');
+        await new IncidentPage(await ensureOpenPage()).gotoSearch();
+        return;
+      }
+      throw e;
+    }
+  };
+
+  await gotoSearchWithRetry();
+
+  const incident = new IncidentPage(usedPage);
   await incident.searchIncident(INCIDENT_NUMBER);
   await incident.waitForDetails(INCIDENT_NUMBER);
 
   // Click Create Bridge
   const result = await incident.clickCreateBridge();
   if (result && result.alreadyCreated) {
-    console.log(result.message);
+    console.log(result.message || 'This incident is already created bridge');
+    return;
   } else {
     // Wait 3 seconds for form to load
     console.log('Waiting 3 seconds for Create Bridge form to load...');
@@ -67,10 +90,12 @@ test('search incident and click Create bridge', async () => {
 
     // Click Save button
     await incident.clickSaveButton();
-    console.log('Bridge creation flow completed successfully');
+    const ok = await incident.waitForSuccessMessage(15_000);
+    if (!ok) throw new Error('Expected Success message after saving Create bridge');
+    console.log('Success');
+    return;
   }
   await usedPage.waitForTimeout(2000);
 
   // Intentionally keep the browser/context open for manual inspection per user request.
 });
-
