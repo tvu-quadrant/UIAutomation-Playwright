@@ -336,7 +336,12 @@ test('manual auth: incident create bridge flow (no MSAuth.json)', async () => {
   test.setTimeout(15 * 60 * 1000);
 
   // Load .env fresh and get INCIDENT_NUMBER
-  require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), override: true });
+  // IMPORTANT:
+  // When invoked from the Azure Function, `INCIDENT_NUMBER` is injected via environment
+  // (based on the HTTP query param). Do not override it with local `.env`.
+  if (!process.env.INCIDENT_NUMBER) {
+    require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), override: true });
+  }
   const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154880884';
 
   const manualWaitMs = Number(process.env.MANUAL_AUTH_WAIT_MS || 10 * 60 * 1000);

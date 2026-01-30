@@ -9,7 +9,12 @@ const AUTH_FILE = path.resolve(__dirname, '..', 'MSAuth.json');
 
 test('search incident and click Create bridge', async () => {
   // Load .env fresh and get INCIDENT_NUMBER
-  require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), override: true });
+  // IMPORTANT:
+  // If `INCIDENT_NUMBER` is already set (e.g., injected by an external runner like the
+  // Azure Function), do not override it with local `.env`.
+  if (!process.env.INCIDENT_NUMBER) {
+    require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), override: true });
+  }
   const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154880884';
   // Allow manual sign-in to complete (up to 10 minutes)
   test.setTimeout(600000);
