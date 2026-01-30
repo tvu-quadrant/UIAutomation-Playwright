@@ -1,0 +1,340 @@
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+module.exports = async function (context, req) {
+  const baseUrl = String(process.env.CREATE_BRIDGE_BASE_URL || 'http://localhost:7075').replace(/\/$/, '');
+  const createBridgeUrl = (incidentId) => `${baseUrl}/api/create-bridge?incidentId=${encodeURIComponent(String(incidentId))}`;
+
+  // Mock incident data (replace later with real source)
+  const incidents = [
+    { id: 154895666, title: 'IcM: Portal latency spikes', severity: 'Sev2', status: 'Active', owner: 'Eng On-Call', updated: '5m ago' },
+    { id: 154896693, title: 'Bridge audio issues reported', severity: 'Sev3', status: 'Mitigating', owner: 'Teams Ops', updated: '12m ago' },
+    { id: 154895553, title: 'Auth redirect loop (PPE)', severity: 'Sev2', status: 'Active', owner: 'Identity', updated: '18m ago' },
+    { id: 154887055, title: 'Incident timeline missing entries', severity: 'Sev3', status: 'Investigating', owner: 'IcM Platform', updated: '25m ago' },
+    { id: 154941406, title: 'Service health banner incorrect', severity: 'Sev4', status: 'Monitoring', owner: 'Web UX', updated: '1h ago' },
+    { id: 154942057, title: 'Join bridge button flaky', severity: 'Sev3', status: 'Active', owner: 'Automation', updated: '1h ago' },
+    { id: 154941402, title: 'Incident search results stale', severity: 'Sev3', status: 'Mitigating', owner: 'Search', updated: '2h ago' },
+    { id: 154941200, title: 'Create bridge action missing', severity: 'Sev2', status: 'Active', owner: 'IcM UI', updated: '3h ago' },
+    { id: 155005814, title: 'Notifications delayed', severity: 'Sev2', status: 'Investigating', owner: 'Comms', updated: '6h ago' },
+  ];
+
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Incident Bridge Launcher</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --card: rgba(255,255,255,0.06);
+      --card2: rgba(255,255,255,0.08);
+      --text: #eaf0ff;
+      --muted: rgba(234,240,255,0.7);
+      --border: rgba(255,255,255,0.12);
+      --accent: #7c5cff;
+      --accent2: #2dd4bf;
+      --danger: #fb7185;
+      --warning: #fbbf24;
+      --ok: #34d399;
+      --shadow: 0 12px 40px rgba(0,0,0,0.35);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 10% 10%, rgba(124,92,255,0.25), transparent 60%),
+        radial-gradient(900px 600px at 80% 0%, rgba(45,212,191,0.18), transparent 55%),
+        radial-gradient(700px 500px at 80% 80%, rgba(251,113,133,0.15), transparent 55%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    .wrap {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 20px 50px;
+    }
+    header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .title {
+      display: grid;
+      gap: 6px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0.2px;
+    }
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.05);
+      color: var(--muted);
+      font-size: 12px;
+      box-shadow: var(--shadow);
+      white-space: nowrap;
+    }
+    .pill code { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 14px 0 18px;
+    }
+    .search {
+      flex: 1;
+      min-width: 240px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.06);
+      box-shadow: var(--shadow);
+    }
+    .search input {
+      width: 100%;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--text);
+      font-size: 13px;
+    }
+    .search input::placeholder { color: rgba(234,240,255,0.45); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    @media (max-width: 980px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+
+    .card {
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, var(--card), rgba(255,255,255,0.03));
+      border-radius: 16px;
+      padding: 14px 14px 12px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+    .card:before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      background: radial-gradient(500px 200px at 20% 0%, rgba(124,92,255,0.25), transparent 55%);
+      pointer-events: none;
+      opacity: 0.6;
+    }
+    .card > * { position: relative; }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .id {
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      font-size: 13px;
+      color: rgba(234,240,255,0.9);
+    }
+    .updated {
+      font-size: 12px;
+      color: rgba(234,240,255,0.55);
+    }
+    .title2 {
+      margin: 10px 0 10px;
+      font-size: 14px;
+      line-height: 1.35;
+      color: rgba(234,240,255,0.95);
+      min-height: 40px;
+    }
+    .meta {
+      display: grid;
+      gap: 8px;
+      margin: 10px 0 12px;
+    }
+    .kv {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      color: rgba(234,240,255,0.72);
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .kv strong { color: rgba(234,240,255,0.92); font-weight: 600; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.06);
+      color: rgba(234,240,255,0.85);
+      white-space: nowrap;
+    }
+    .sev2 { border-color: rgba(251,113,133,0.35); background: rgba(251,113,133,0.12); }
+    .sev3 { border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.12); }
+    .sev4 { border-color: rgba(52,211,153,0.30); background: rgba(52,211,153,0.12); }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 10px;
+    }
+    a.btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      text-decoration: none;
+      border: 1px solid rgba(124,92,255,0.45);
+      background: linear-gradient(180deg, rgba(124,92,255,0.28), rgba(124,92,255,0.12));
+      color: var(--text);
+      font-weight: 650;
+      font-size: 13px;
+      transition: transform 0.12s ease, filter 0.12s ease, background 0.12s ease;
+    }
+    a.btn:hover { transform: translateY(-1px); filter: brightness(1.08); }
+    a.btn:active { transform: translateY(0px); }
+
+    .smallLink {
+      color: rgba(234,240,255,0.7);
+      font-size: 12px;
+      text-decoration: none;
+      border-bottom: 1px dashed rgba(234,240,255,0.35);
+      padding-bottom: 1px;
+    }
+    .smallLink:hover { color: rgba(234,240,255,0.9); }
+
+    footer {
+      margin-top: 18px;
+      color: rgba(234,240,255,0.55);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="title">
+        <h1>Incident Bridge Launcher</h1>
+        <p class="subtitle">Mock incident grid with one-click bridge creation via your local Azure Function.</p>
+      </div>
+      <div class="pill">Create-bridge endpoint: <code>${escapeHtml(baseUrl)}/api/create-bridge</code></div>
+    </header>
+
+    <div class="toolbar">
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M10.5 18.5C14.6421 18.5 18 15.1421 18 11C18 6.85786 14.6421 3.5 10.5 3.5C6.35786 3.5 3 6.85786 3 11C3 15.1421 6.35786 18.5 10.5 18.5Z" stroke="rgba(234,240,255,0.65)" stroke-width="1.8"/>
+          <path d="M20.5 20.5L16.7 16.7" stroke="rgba(234,240,255,0.65)" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <input id="q" placeholder="Filter by id, title, status, owner…" autocomplete="off" />
+      </div>
+      <div class="pill">Tip: set <code>CREATE_BRIDGE_BASE_URL</code> to change host/port</div>
+    </div>
+
+    <div id="grid" class="grid">
+      ${incidents
+        .map((i) => {
+          const sevClass = String(i.severity || '').toLowerCase() === 'sev2'
+            ? 'sev2'
+            : String(i.severity || '').toLowerCase() === 'sev3'
+              ? 'sev3'
+              : 'sev4';
+
+          const deepLink = createBridgeUrl(i.id);
+
+          return `
+            <article class="card" data-text="${escapeHtml([i.id, i.title, i.severity, i.status, i.owner, i.updated].join(' ')).toLowerCase()}">
+              <div class="row">
+                <div class="id">Incident #${escapeHtml(i.id)}</div>
+                <div class="updated">Updated ${escapeHtml(i.updated)}</div>
+              </div>
+              <div class="title2">${escapeHtml(i.title)}</div>
+              <div class="meta">
+                <div class="kv"><span>Severity</span><strong><span class="badge ${sevClass}">${escapeHtml(i.severity)}</span></strong></div>
+                <div class="kv"><span>Status</span><strong>${escapeHtml(i.status)}</strong></div>
+                <div class="kv"><span>Owner</span><strong>${escapeHtml(i.owner)}</strong></div>
+              </div>
+              <div class="actions">
+                <a class="btn" href="${escapeHtml(deepLink)}">Create bridge</a>
+                <a class="smallLink" href="${escapeHtml(deepLink)}" title="Copy link">Link</a>
+              </div>
+            </article>
+          `;
+        })
+        .join('')}
+    </div>
+
+    <footer>
+      This page is served by an Azure Function. Clicking <strong>Create bridge</strong> calls the HTTP trigger that runs Playwright.
+      In Azure, you’d typically protect the Function App with Entra authentication (redirect happens before the function runs).
+    </footer>
+  </div>
+
+  <script>
+    (function(){
+      const input = document.getElementById('q');
+      const cards = Array.from(document.querySelectorAll('[data-text]'));
+      const apply = () => {
+        const q = (input.value || '').trim().toLowerCase();
+        for (const c of cards) {
+          const hay = c.getAttribute('data-text') || '';
+          c.style.display = !q || hay.includes(q) ? '' : 'none';
+        }
+      };
+      input.addEventListener('input', apply);
+      apply();
+    })();
+  </script>
+</body>
+</html>`;
+
+  return {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+    body: html,
+  };
+};

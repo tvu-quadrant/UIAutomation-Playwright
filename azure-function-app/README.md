@@ -21,6 +21,12 @@ Then open:
 
 - `http://localhost:7071/api/create-bridge?incidentId=155071351`
 
+Or open the landing page:
+
+- `http://localhost:7071/api/`
+	- Shows a mock incident grid with "Create bridge" links.
+	- Set `CREATE_BRIDGE_BASE_URL` if your host/port differs (e.g. `http://localhost:7075`).
+
 This will run `tests/create-bridge-manual-auth.spec.js` with:
 
 - `INCIDENT_NUMBER=<incidentId>`
