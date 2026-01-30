@@ -187,7 +187,8 @@ class IncidentPage {
     for (const sel of moreSelectors) {
       if (Date.now() - start > 5000) break; // only try for 5s total
       const more = this.page.locator(sel).first();
-      if ((await more.count()) === 0) continue;
+      const moreVisible = await more.isVisible().catch(() => false);
+      if (!moreVisible) continue;
       try {
         await more.waitFor({ state: 'visible', timeout: 2000 });
         await more.click({ timeout: 2000 });

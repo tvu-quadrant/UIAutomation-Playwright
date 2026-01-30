@@ -6,7 +6,8 @@
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "save-auth": "node ./scripts/save-ms-auth.js",
-    "test:debug": "pwsh -c \"npx playwright test --debug\""
+    "test:debug": "powershell -NoProfile -Command \"npx playwright test --debug\"",
+    "func:start": "powershell -NoProfile -Command \"Set-Location azure-function-app; func start\""
   },
   "devDependencies": {
     "@azure/identity": "^4.13.0",

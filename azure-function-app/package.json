@@ -1,0 +1,9 @@
+{
+  "name": "uiautomation-playwright-functions",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "func start"
+  }
+}

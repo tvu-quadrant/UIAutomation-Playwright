@@ -388,21 +388,50 @@ test('manual auth: incident create bridge flow (no MSAuth.json)', async () => {
 
   const incidentOnDetails = new IncidentPage(detailsPage);
 
-  const result = await incidentOnDetails.clickCreateBridge();
+  const clickCreateBridgeWithRetry = async () => {
+    const tryOnce = async (page) => {
+      const incident = new IncidentPage(page);
+      return await incident.clickCreateBridge();
+    };
+
+    try {
+      if (detailsPage.isClosed()) {
+        const recovered = await waitForIncidentDetailsInAnyPage(context, signedInPage, INCIDENT_NUMBER, 30_000);
+        return await tryOnce(recovered);
+      }
+
+      return await tryOnce(detailsPage);
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (msg.includes('has been closed')) {
+        const recovered = await waitForIncidentDetailsInAnyPage(context, signedInPage, INCIDENT_NUMBER, 30_000);
+        return await tryOnce(recovered);
+      }
+      throw e;
+    }
+  };
+
+  const result = await clickCreateBridgeWithRetry();
   if (result && result.alreadyCreated) {
     console.log(result.message || 'This incident is already created bridge');
     return;
   } else {
     console.log('Waiting 3 seconds for Create Bridge form to load...');
-    await detailsPage.waitForTimeout(3000);
+    // Use the currently-open incident tab (detailsPage may have been replaced by SSO)
+    const activeDetailsPage = detailsPage.isClosed()
+      ? await waitForIncidentDetailsInAnyPage(context, signedInPage, INCIDENT_NUMBER, 30_000)
+      : detailsPage;
 
-    await incidentOnDetails.selectEngineeringOption();
+    await activeDetailsPage.waitForTimeout(3000);
+
+    const incidentOnActiveDetails = new IncidentPage(activeDetailsPage);
+    await incidentOnActiveDetails.selectEngineeringOption();
 
     console.log('Waiting 2 seconds before clicking Save...');
-    await detailsPage.waitForTimeout(2000);
+    await activeDetailsPage.waitForTimeout(2000);
 
-    await incidentOnDetails.clickSaveButton();
-    const ok = await incidentOnDetails.waitForSuccessMessage(15_000);
+    await incidentOnActiveDetails.clickSaveButton();
+    const ok = await incidentOnActiveDetails.waitForSuccessMessage(15_000);
     if (!ok) throw new Error('Expected Success message after saving Create bridge');
     console.log('Success');
     return;
