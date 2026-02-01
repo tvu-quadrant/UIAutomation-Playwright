@@ -7,7 +7,7 @@ const { IncidentPage } = require('./helpers/findCreateBridge');
 
 const AUTH_FILE = path.resolve(__dirname, '..', 'MSAuth.json');
 
-test('search incident and click Create bridge', async () => {
+test('search incident and click Create bridge', async ({ browser: pwBrowser }) => {
   // Load .env fresh and get INCIDENT_NUMBER
   // IMPORTANT:
   // If `INCIDENT_NUMBER` is already set (e.g., injected by an external runner like the
@@ -18,6 +18,8 @@ test('search incident and click Create bridge', async () => {
   const INCIDENT_NUMBER = process.env.INCIDENT_NUMBER || '154880884';
   // Allow manual sign-in to complete (up to 10 minutes)
   test.setTimeout(600000);
+
+  const runningOnService = Boolean(process.env.PLAYWRIGHT_SERVICE_URL);
 
   let browser;
   let context;
@@ -43,7 +45,17 @@ test('search incident and click Create bridge', async () => {
     process.env.EDGE_CDP_URL ||
     process.env.CHROME_CDP_URL;
 
-  if (cdpPort || cdpUrlFromEnv) {
+  if (runningOnService) {
+    // Playwright Workspaces: use the Playwright Test fixture browser (already connected).
+    // CDP and local browser launches are not applicable in the service environment.
+    if (!fs.existsSync(AUTH_FILE)) {
+      test.skip(true, 'No MSAuth.json found. Run `npm run save-auth` locally to generate it before running in Playwright Workspaces.');
+      return;
+    }
+
+    context = await pwBrowser.newContext({ storageState: AUTH_FILE });
+    usedPage = await context.newPage();
+  } else if (cdpPort || cdpUrlFromEnv) {
     const port = cdpPort || 9222;
     const cdpUrl = cdpUrlFromEnv || `http://127.0.0.1:${port}`;
     browser = await chromium.connectOverCDP(cdpUrl);
