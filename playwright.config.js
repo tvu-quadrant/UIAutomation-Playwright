@@ -6,7 +6,10 @@ const config = {
     timeout: 5000
   },
   fullyParallel: false,
-  reporter: [['list']],
+  reporter: [
+    ['html', { open: 'never' }],
+    ['list'],
+  ],
   use: {
     // Use Microsoft Edge (Chromium) as the browser channel
     channel: 'msedge',

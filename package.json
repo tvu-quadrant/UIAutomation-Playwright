@@ -8,6 +8,7 @@
     "test:service": "playwright test --config=playwright.service.config.js",
     "test:service:headed": "playwright test --config=playwright.service.config.js --headed",
     "test:service:create-bridge": "playwright test tests/create-bridge.spec.js --config=playwright.service.config.js",
+    "report": "playwright show-report",
     "save-auth": "node ./scripts/save-ms-auth.js",
     "test:debug": "powershell -NoProfile -Command \"npx playwright test --debug\"",
     "func:start": "powershell -NoProfile -Command \"Set-Location azure-function-app; func start\""
