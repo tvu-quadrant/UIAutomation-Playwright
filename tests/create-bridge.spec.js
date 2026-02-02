@@ -26,8 +26,16 @@ test('search incident and click Create bridge', async ({ browser: pwBrowser }) =
   let usedPage;
   let launchedBrowser = false;
 
-  const browserName = String(process.env.BROWSER || 'edge').trim().toLowerCase();
-  const launchChannel = browserName === 'chrome' ? 'chrome' : 'msedge';
+  const browserName = String(process.env.BROWSER || '').trim().toLowerCase();
+  let launchChannel = 'msedge';
+  if (browserName === 'chrome') {
+    launchChannel = 'chrome';
+  } else if (browserName === 'msedge' || browserName === 'edge') {
+    launchChannel = 'msedge';
+  } else if (browserName) {
+    // Allow explicit override for other channels if needed
+    launchChannel = browserName;
+  }
 
   // No OS-level helpers: rely on Playwright storage state and site behavior only
 
