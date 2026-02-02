@@ -16,7 +16,8 @@
   "devDependencies": {
     "@azure/identity": "^4.13.0",
     "@azure/playwright": "^1.1.1",
-    "@playwright/test": "^1.57.0"
+    "@playwright/test": "^1.58.1",
+    "playwright": "^1.58.1"
   },
   "dependencies": {
     "@azure/keyvault-secrets": "^4.10.0",

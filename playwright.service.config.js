@@ -1,27 +1,12 @@
 const { defineConfig } = require('@playwright/test');
-require('dotenv').config();
 const { createAzurePlaywrightConfig, ServiceOS } = require('@azure/playwright');
 const { DefaultAzureCredential } = require('@azure/identity');
-const baseConfig = require('./playwright.config');
+const config = require('./playwright.config');
 
 /* Learn more about service configuration at https://aka.ms/pww/docs/config */
-module.exports = defineConfig(
-  {
-    ...baseConfig,
-    // Playwright Workspaces runs browsers on Linux; Edge channel isn't available.
-    use: {
-      ...(baseConfig.use || {}),
-      channel: undefined,
-      headless: true,
-    },
-    projects: [
-      {
-        name: 'chromium',
-        use: { browserName: 'chromium' },
-      },
-    ],
-  },
-  createAzurePlaywrightConfig(baseConfig, {
+export default defineConfig(
+  config,
+  createAzurePlaywrightConfig(config, {
     exposeNetwork: '<loopback>',
     connectTimeout: 3 * 60 * 1000, // 3 minutes
     os: ServiceOS.LINUX,

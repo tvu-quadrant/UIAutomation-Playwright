@@ -4,3 +4,5 @@ playwright-report/
 .env
 MSAuth.json
 MSAuth.json.bak*
+
+MSAuth_cookies_expiry.md
