@@ -1,28 +1,35 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const { ensureMSAuthFile } = require('../shared/msAuth');
 
 function readQuery(req, key) {
   // Azure Functions may populate req.query or req.queries
   return (req.query && req.query[key]) || (req.queries && req.queries[key]);
 }
 
-function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs }) {
+function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs, msAuthPath }) {
   return new Promise((resolve) => {
-    const args = ['test', 'tests/create-bridge-manual-auth.spec.js', '--workers=1'];
+    const functionRoot = repoRoot;
+    const runningOnService = Boolean(process.env.PLAYWRIGHT_SERVICE_URL);
 
-    if (headed) args.push('--headed');
+    const args = runningOnService
+      ? ['test', 'tests/create-bridge.spec.js', `--config=${path.join(functionRoot, 'playwright.service.config.cjs')}`, '--workers=1']
+      : ['test', 'tests/create-bridge-manual-auth.spec.js', '--workers=1'];
+
+    // Headed mode is not appropriate for cloud runners; force headless when using Workspaces.
+    if (!runningOnService && headed) args.push('--headed');
 
     const playwrightCliJsCandidates = [
-      path.join(repoRoot, 'node_modules', 'playwright', 'cli.js'),
-      path.join(repoRoot, 'node_modules', '@playwright', 'test', 'cli.js'),
+      path.join(functionRoot, 'node_modules', 'playwright', 'cli.js'),
+      path.join(functionRoot, 'node_modules', '@playwright', 'test', 'cli.js'),
     ];
 
     const playwrightCliJs = playwrightCliJsCandidates.find((p) => require('fs').existsSync(p));
 
     const playwrightCliBin =
       process.platform === 'win32'
-        ? path.join(repoRoot, 'node_modules', '.bin', 'playwright.cmd')
-        : path.join(repoRoot, 'node_modules', '.bin', 'playwright');
+        ? path.join(functionRoot, 'node_modules', '.bin', 'playwright.cmd')
+        : path.join(functionRoot, 'node_modules', '.bin', 'playwright');
 
     if (!playwrightCliJs && !require('fs').existsSync(playwrightCliBin)) {
       resolve({
@@ -42,7 +49,14 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
       ...process.env,
       INCIDENT_NUMBER: String(incidentId),
       BROWSER: browserName,
+      ...(msAuthPath ? { MSAUTH_PATH: String(msAuthPath) } : {}),
     };
+
+    // Always force headless on cloud runs.
+    if (runningOnService) {
+      env.HEADED = '0';
+      env.PWHEADLESS = '1';
+    }
 
     // Some environments inject NODE_OPTIONS (e.g. --require) that can break child Node processes.
     // Playwright is launched in a separate process; keep it isolated from host-level Node hooks.
@@ -105,7 +119,7 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
     const useWindowsVerbatimArguments = isWin && /cmd\.exe$/i.test(String(exe));
 
     const child = spawn(exe, exeArgs, {
-      cwd: repoRoot,
+      cwd: functionRoot,
       shell: false,
       windowsVerbatimArguments: useWindowsVerbatimArguments,
       env,
@@ -143,6 +157,7 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
   });
 }
 
+
 module.exports = async function (context, req) {
   const incidentId = readQuery(req, 'incidentId') || readQuery(req, 'incidentID') || readQuery(req, 'incident') || readQuery(req, 'id');
 
@@ -158,11 +173,25 @@ module.exports = async function (context, req) {
     };
   }
 
-  const repoRoot = path.resolve(__dirname, '..', '..');
+  const repoRoot = path.resolve(__dirname, '..');
 
   const browserName = String(process.env.BROWSER || 'chrome').trim() || 'chrome';
-  const headed = String(process.env.HEADED || '1').trim() !== '0';
+  const headed = process.env.PLAYWRIGHT_SERVICE_URL ? false : String(process.env.HEADED || '1').trim() !== '0';
   const timeoutMs = Number(process.env.FUNCTION_TIMEOUT_MS || 20 * 60 * 1000);
+
+  // If running with Playwright Workspaces, ensure MSAuth.json exists (prefer Key Vault secret).
+  let msAuthPath;
+  if (process.env.PLAYWRIGHT_SERVICE_URL) {
+    try {
+      msAuthPath = await ensureMSAuthFile(repoRoot, { strict: true });
+    } catch (e) {
+      return {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+        body: { ok: false, error: `Failed to fetch MSAuth from Key Vault: ${e?.message || e}` },
+      };
+    }
+  }
 
   context.log(`Triggering Playwright create-bridge for incidentId=${incidentId}`);
   context.log(`Repo root: ${repoRoot}`);
@@ -174,6 +203,7 @@ module.exports = async function (context, req) {
     browserName,
     headed,
     timeoutMs,
+    msAuthPath,
   });
 
   const ok = result.code === 0;

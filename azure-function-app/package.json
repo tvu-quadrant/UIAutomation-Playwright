@@ -3,7 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "start": "func start"
+    "start": "func start",
+    "test:service:create-bridge": "playwright test tests/create-bridge.spec.js --config=playwright.service.config.cjs --workers=1",
+    "test:local:create-bridge": "playwright test tests/create-bridge.spec.js --config=playwright.config.cjs --workers=1"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.13.0",
+    "@azure/keyvault-secrets": "^4.10.0",
+    "@azure/playwright": "^1.1.1",
+    "@azure/storage-blob": "^12.28.0",
+    "@playwright/test": "^1.58.1",
+    "dotenv": "^17.2.3",
+    "playwright": "^1.58.1"
   }
 }

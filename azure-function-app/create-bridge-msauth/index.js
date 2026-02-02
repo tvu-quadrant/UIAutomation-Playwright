@@ -1,17 +1,20 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { ensureMSAuthFile } = require('../shared/msAuth');
 
 function readQuery(req, key) {
   // Azure Functions may populate req.query or req.queries
   return (req.query && req.query[key]) || (req.queries && req.queries[key]);
 }
 
-function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs }) {
+function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs, msAuthPath }) {
   return new Promise((resolve) => {
-    const args = ['test', 'tests/create-bridge.spec.js', '--workers=1'];
+    const runningOnService = Boolean(process.env.PLAYWRIGHT_SERVICE_URL);
+    const configArg = runningOnService ? [`--config=${path.join(repoRoot, 'playwright.service.config.cjs')}`] : [];
+    const args = ['test', 'tests/create-bridge.spec.js', ...configArg, '--workers=1'];
 
-    if (headed) args.push('--headed');
+    if (!runningOnService && headed) args.push('--headed');
 
     const playwrightCliJsCandidates = [
       path.join(repoRoot, 'node_modules', 'playwright', 'cli.js'),
@@ -43,7 +46,14 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
       ...process.env,
       INCIDENT_NUMBER: String(incidentId),
       BROWSER: browserName,
+      ...(msAuthPath ? { MSAUTH_PATH: String(msAuthPath) } : {}),
     };
+
+    // Always force headless on cloud runs.
+    if (runningOnService) {
+      env.HEADED = '0';
+      env.PWHEADLESS = '1';
+    }
 
     // Some environments inject NODE_OPTIONS (e.g. --require) that can break child Node processes.
     // Playwright is launched in a separate process; keep it isolated from host-level Node hooks.
@@ -149,7 +159,26 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
   });
 }
 
+
 module.exports = async function (context, req) {
+  const t0 = Date.now();
+
+  const logStep = (name, details) => {
+    const ms = Date.now() - t0;
+    const detailText = details ? ` | ${details}` : '';
+    context.log(`[create-bridge-msauth] +${ms}ms ${name}${detailText}`);
+  };
+
+  const safeJson = (value) => {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  logStep('request_received', `invocationId=${context.invocationId}`);
+
   const incidentId =
     readQuery(req, 'incidentId') ||
     readQuery(req, 'incidentID') ||
@@ -157,6 +186,7 @@ module.exports = async function (context, req) {
     readQuery(req, 'id');
 
   if (!incidentId) {
+    logStep('missing_incidentId');
     return {
       status: 400,
       headers: { 'content-type': 'application/json' },
@@ -168,29 +198,99 @@ module.exports = async function (context, req) {
     };
   }
 
-  const repoRoot = path.resolve(__dirname, '..', '..');
-  const authFile = path.resolve(repoRoot, 'MSAuth.json');
+  const repoRoot = path.resolve(__dirname, '..');
+  let authFile = path.resolve(repoRoot, 'MSAuth.json');
+
+  const runningOnService = Boolean(process.env.PLAYWRIGHT_SERVICE_URL);
+  logStep(
+    'resolved_paths',
+    `repoRoot=${repoRoot} | authFile=${authFile} | runningOnService=${runningOnService}`,
+  );
+
+  // If the auth file isn't present in the Function App root, try to fetch it.
+  // This supports cloud deployments where MSAuth.json is stored in Blob or Key Vault.
+  if (!fs.existsSync(authFile)) {
+    logStep('msauth_missing_local', 'attempting_fetch');
+    try {
+      const fetchedPath = await ensureMSAuthFile(repoRoot, { strict: true });
+      if (fetchedPath) {
+        logStep('msauth_fetched', `path=${fetchedPath}`);
+        authFile = fetchedPath;
+      }
+    } catch (e) {
+      logStep('msauth_fetch_failed', safeJson({ message: e?.message || String(e) }));
+      return {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+        body: { ok: false, error: `Failed to fetch MSAuth.json: ${e?.message || e}` },
+      };
+    }
+  }
+
+  // Validate MSAuth.json (existence + basic schema) without logging any secret contents.
+  if (fs.existsSync(authFile)) {
+    try {
+      const stat = fs.statSync(authFile);
+      logStep('msauth_exists', `path=${authFile} | bytes=${stat.size}`);
+      const raw = fs.readFileSync(authFile, 'utf8');
+      const parsed = JSON.parse(raw);
+      const cookiesCount = Array.isArray(parsed?.cookies) ? parsed.cookies.length : null;
+      const originsCount = Array.isArray(parsed?.origins) ? parsed.origins.length : null;
+      const keys = parsed && typeof parsed === 'object' ? Object.keys(parsed).slice(0, 10) : null;
+      logStep('msauth_valid_json', safeJson({ cookiesCount, originsCount, keysPreview: keys }));
+    } catch (e) {
+      logStep('msauth_invalid', safeJson({ path: authFile, message: e?.message || String(e) }));
+      return {
+        status: 412,
+        headers: { 'content-type': 'application/json' },
+        body: {
+          ok: false,
+          error: 'MSAuth.json exists but is not a valid Playwright storageState JSON.',
+          expectedPath: authFile,
+          details: e?.message || String(e),
+        },
+      };
+    }
+  }
 
   if (!fs.existsSync(authFile)) {
+    logStep('msauth_still_missing', `expectedPath=${authFile}`);
     return {
       status: 412,
       headers: { 'content-type': 'application/json' },
       body: {
         ok: false,
-        error: 'MSAuth.json not found in repo root.',
+        error: 'MSAuth.json not found in Function App root.',
         expectedPath: authFile,
-        hint: 'Run the repo script that generates MSAuth.json (e.g. scripts/save-ms-auth.js) before calling this endpoint.',
+        hint: [
+          'Provide MSAuth.json via Blob Storage or Key Vault so the Function can download it at runtime.',
+          'Blob settings: MSAUTH_BLOB_CONTAINER, MSAUTH_BLOB_NAME (and optionally MSAUTH_BLOB_CONNECTION or MSAUTH_BLOB_ACCOUNT_URL).',
+          'Key Vault settings: KEYVAULT_URL, MSAUTH_SECRET_NAME.',
+        ].join(' '),
+        debug: {
+          hasPlaywrightServiceUrl: Boolean(process.env.PLAYWRIGHT_SERVICE_URL),
+          hasAzureWebJobsStorage: Boolean(process.env.AzureWebJobsStorage),
+          msAuthBlobContainer: process.env.MSAUTH_BLOB_CONTAINER || null,
+          msAuthBlobName: process.env.MSAUTH_BLOB_NAME || null,
+          hasMsAuthBlobConnection: Boolean(process.env.MSAUTH_BLOB_CONNECTION),
+          msAuthBlobAccountUrl: process.env.MSAUTH_BLOB_ACCOUNT_URL || null,
+          keyVaultUrl: process.env.KEYVAULT_URL || null,
+          msAuthSecretName: process.env.MSAUTH_SECRET_NAME || null,
+        },
       },
     };
   }
 
   const browserName = String(process.env.BROWSER || 'edge').trim() || 'edge';
-  const headed = String(process.env.HEADED || '1').trim() !== '0';
+  const headed = process.env.PLAYWRIGHT_SERVICE_URL ? false : String(process.env.HEADED || '1').trim() !== '0';
   const timeoutMs = Number(process.env.FUNCTION_TIMEOUT_MS || 20 * 60 * 1000);
 
-  context.log(`Triggering Playwright create-bridge (MSAuth) for incidentId=${incidentId}`);
-  context.log(`Repo root: ${repoRoot}`);
-  context.log(`Browser: ${browserName} (headed=${headed})`);
+  logStep(
+    'run_config',
+    safeJson({ incidentId: String(incidentId), browserName, headed, timeoutMs, runningOnService }),
+  );
+
+  logStep('starting_playwright');
 
   const result = await runPlaywright({
     repoRoot,
@@ -198,13 +298,16 @@ module.exports = async function (context, req) {
     browserName,
     headed,
     timeoutMs,
+    msAuthPath: authFile,
   });
+
+  logStep('playwright_finished', safeJson({ exitCode: result.code, timedOut: result.timedOut }));
 
   const ok = result.code === 0;
 
   if (!ok) {
     const snippet = String(result.output || '').slice(0, 5000);
-    context.log(`Playwright failed (exitCode=${result.code}, timedOut=${result.timedOut}). Output (truncated):`);
+    logStep('playwright_failed', `exitCode=${result.code} | timedOut=${result.timedOut}`);
     context.log(snippet);
   }
 
