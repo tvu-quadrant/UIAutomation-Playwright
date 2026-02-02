@@ -19,11 +19,12 @@ func start
 
 Then open:
 
-- `http://localhost:7071/api/create-bridge?incidentId=155071351`
+- `http://localhost:7075/api/create-bridge?incidentId=155071351`
+- `http://localhost:7075/api/create-bridge-msauth?incidentId=155071351`
 
 Or open the landing page:
 
-- `http://localhost:7071/api/`
+- `http://localhost:7075/api/`
 	- Shows a mock incident grid with "Create bridge" links.
 	- Set `CREATE_BRIDGE_BASE_URL` if your host/port differs (e.g. `http://localhost:7075`).
 
@@ -31,6 +32,8 @@ This will run `tests/create-bridge-manual-auth.spec.js` with:
 
 - `INCIDENT_NUMBER=<incidentId>`
 - `BROWSER` from `azure-function-app/local.settings.json` (defaults to `chrome`)
+
+The MSAuth variant will run `tests/create-bridge.spec.js` (expects `MSAuth.json` in the repo root).
 
 ## Entra login redirect behavior
 

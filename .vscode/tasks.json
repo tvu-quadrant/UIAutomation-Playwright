@@ -4,12 +4,12 @@
 		{
 			"type": "func",
 			"label": "func: host start",
-			"command": "host start",
+			"command": "host start --port 7075",
 			"problemMatcher": "$func-node-watch",
 			"isBackground": true,
 			"dependsOn": "npm install (functions)",
 			"options": {
-				"cwd": "${workspaceFolder}/azure-function-app"
+				"cwd": "C:\\c\\Code\\UIAutomation-Playwright-Quadrant\\azure-function-app"
 			}
 		},
 		{
@@ -17,7 +17,7 @@
 			"label": "npm install (functions)",
 			"command": "npm install",
 			"options": {
-				"cwd": "${workspaceFolder}/azure-function-app"
+				"cwd": "C:\\c\\Code\\UIAutomation-Playwright-Quadrant\\azure-function-app"
 			}
 		},
 		{
@@ -26,7 +26,7 @@
 			"command": "npm prune --production",
 			"problemMatcher": [],
 			"options": {
-				"cwd": "${workspaceFolder}/azure-function-app"
+				"cwd": "C:\\c\\Code\\UIAutomation-Playwright-Quadrant\\azure-function-app"
 			}
 		}
 	]

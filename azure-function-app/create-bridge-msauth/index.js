@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 function readQuery(req, key) {
   // Azure Functions may populate req.query or req.queries
@@ -8,7 +9,7 @@ function readQuery(req, key) {
 
 function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs }) {
   return new Promise((resolve) => {
-    const args = ['test', 'tests/create-bridge-manual-auth.spec.js', '--workers=1'];
+    const args = ['test', 'tests/create-bridge.spec.js', '--workers=1'];
 
     if (headed) args.push('--headed');
 
@@ -17,14 +18,14 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
       path.join(repoRoot, 'node_modules', '@playwright', 'test', 'cli.js'),
     ];
 
-    const playwrightCliJs = playwrightCliJsCandidates.find((p) => require('fs').existsSync(p));
+    const playwrightCliJs = playwrightCliJsCandidates.find((p) => fs.existsSync(p));
 
     const playwrightCliBin =
       process.platform === 'win32'
         ? path.join(repoRoot, 'node_modules', '.bin', 'playwright.cmd')
         : path.join(repoRoot, 'node_modules', '.bin', 'playwright');
 
-    if (!playwrightCliJs && !require('fs').existsSync(playwrightCliBin)) {
+    if (!playwrightCliJs && !fs.existsSync(playwrightCliBin)) {
       resolve({
         code: -4,
         timedOut: false,
@@ -90,18 +91,14 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
 
     const debugSpawn = String(process.env.DEBUG_PLAYWRIGHT_SPAWN || '').trim() === '1';
     if (debugSpawn) {
-      // Avoid logging the entire environment; just the command that will be executed.
       try {
         // eslint-disable-next-line no-console
-        console.log('[create-bridge] spawn:', { exe, exeArgs, cwd: repoRoot, execPath: process.execPath });
+        console.log('[create-bridge-msauth] spawn:', { exe, exeArgs, cwd: repoRoot, execPath: process.execPath });
       } catch {
         /* ignore */
       }
     }
 
-    // On Windows, verbatim argument mode can cause subtle quoting issues when the executable path
-    // contains spaces (e.g. "C:\\Program Files\\nodejs\\node.exe"). Only use verbatim mode
-    // when spawning cmd.exe with a single /c command-line string.
     const useWindowsVerbatimArguments = isWin && /cmd\.exe$/i.test(String(exe));
 
     const child = spawn(exe, exeArgs, {
@@ -112,7 +109,12 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
     });
 
     child.on('error', (err) => {
-      resolve({ code: -3, output: `Failed to start Playwright: ${err?.message || err}`, timedOut: false, debug: debugInfo });
+      resolve({
+        code: -3,
+        output: `Failed to start Playwright: ${err?.message || err}`,
+        timedOut: false,
+        debug: debugInfo,
+      });
     });
 
     let output = '';
@@ -133,7 +135,11 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
     let timedOut = false;
     const timeout = setTimeout(() => {
       timedOut = true;
-      try { child.kill(); } catch { /* ignore */ }
+      try {
+        child.kill();
+      } catch {
+        /* ignore */
+      }
     }, timeoutMs);
 
     child.on('close', (code) => {
@@ -144,7 +150,11 @@ function runPlaywright({ repoRoot, incidentId, browserName, headed, timeoutMs })
 }
 
 module.exports = async function (context, req) {
-  const incidentId = readQuery(req, 'incidentId') || readQuery(req, 'incidentID') || readQuery(req, 'incident') || readQuery(req, 'id');
+  const incidentId =
+    readQuery(req, 'incidentId') ||
+    readQuery(req, 'incidentID') ||
+    readQuery(req, 'incident') ||
+    readQuery(req, 'id');
 
   if (!incidentId) {
     return {
@@ -153,18 +163,32 @@ module.exports = async function (context, req) {
       body: {
         ok: false,
         error: 'Missing required query parameter: incidentId',
-        example: '/api/create-bridge?incidentId=155071351'
+        example: '/api/create-bridge-msauth?incidentId=155071351',
       },
     };
   }
 
   const repoRoot = path.resolve(__dirname, '..', '..');
+  const authFile = path.resolve(repoRoot, 'MSAuth.json');
 
-  const browserName = String(process.env.BROWSER || 'chrome').trim() || 'chrome';
+  if (!fs.existsSync(authFile)) {
+    return {
+      status: 412,
+      headers: { 'content-type': 'application/json' },
+      body: {
+        ok: false,
+        error: 'MSAuth.json not found in repo root.',
+        expectedPath: authFile,
+        hint: 'Run the repo script that generates MSAuth.json (e.g. scripts/save-ms-auth.js) before calling this endpoint.',
+      },
+    };
+  }
+
+  const browserName = String(process.env.BROWSER || 'edge').trim() || 'edge';
   const headed = String(process.env.HEADED || '1').trim() !== '0';
   const timeoutMs = Number(process.env.FUNCTION_TIMEOUT_MS || 20 * 60 * 1000);
 
-  context.log(`Triggering Playwright create-bridge for incidentId=${incidentId}`);
+  context.log(`Triggering Playwright create-bridge (MSAuth) for incidentId=${incidentId}`);
   context.log(`Repo root: ${repoRoot}`);
   context.log(`Browser: ${browserName} (headed=${headed})`);
 
