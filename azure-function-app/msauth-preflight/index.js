@@ -89,16 +89,18 @@ module.exports = async function (context, req) {
     authExists: false,
     bytes: null,
     json: null,
+    version: null,
   };
 
-  // Quick local check first.
-  if (fs.existsSync(localDefaultPath)) {
+  // Quick local check first (informational only; fetch may refresh it).
+  const existedBefore = fs.existsSync(localDefaultPath);
+  if (existedBefore) {
     result.authPath = localDefaultPath;
     result.authExists = true;
     logStep('local_found', `path=${localDefaultPath}`);
   }
 
-  if (!result.authExists && doFetch) {
+  if (doFetch) {
     const anyConfigured = configured.keyVault || configured.blobUrl || configured.blob;
     if (!anyConfigured) {
       logStep('not_configured', 'no keyvault/blob settings found');
@@ -122,11 +124,19 @@ module.exports = async function (context, req) {
 
     logStep('fetch_start', safeJson({ strict: true, doFetch }));
     try {
-      const fetchedPath = await ensureMSAuthFile(functionRoot, { strict: true, log: captureLog });
+      const fetchedInfo = await ensureMSAuthFile(functionRoot, { strict: true, log: captureLog, returnInfo: true });
+      const fetchedPath = fetchedInfo?.path;
       if (fetchedPath) {
         result.fetched = true;
         result.authPath = fetchedPath;
         result.authExists = fs.existsSync(fetchedPath);
+        result.version = {
+          downloadedAt: fetchedInfo?.meta?.downloadedAt || null,
+          blobLastModified: fetchedInfo?.meta?.lastModified || null,
+          etag: fetchedInfo?.meta?.etag || null,
+          contentLength: typeof fetchedInfo?.meta?.contentLength === 'number' ? fetchedInfo.meta.contentLength : null,
+          refreshed: typeof fetchedInfo?.refreshed === 'boolean' ? fetchedInfo.refreshed : null,
+        };
         logStep('fetch_done', `path=${fetchedPath} exists=${result.authExists}`);
       }
     } catch (e) {
@@ -154,6 +164,7 @@ module.exports = async function (context, req) {
         ok: false,
         error: 'MSAuth.json is missing (after optional fetch).',
         doFetch,
+        existedBefore,
         config,
         configured,
         logs,

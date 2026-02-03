@@ -26,6 +26,10 @@ function makeLogger(log) {
   };
 }
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
 async function downloadToFile(stream, filePath) {
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
 
@@ -105,9 +109,26 @@ async function tryBlob({ functionRoot }) {
   }
 
   const authPath = getAuthWritePath(functionRoot);
+
+  let props;
+  try {
+    props = await blobClient.getProperties();
+  } catch {
+    props = null;
+  }
+
   const resp = await blobClient.download();
   await downloadToFile(resp.readableStreamBody, authPath);
-  return authPath;
+
+  return {
+    path: authPath,
+    meta: {
+      downloadedAt: nowIso(),
+      lastModified: props?.lastModified ? props.lastModified.toISOString() : null,
+      etag: props?.etag || null,
+      contentLength: typeof props?.contentLength === 'number' ? props.contentLength : null,
+    },
+  };
 }
 
 async function downloadUrlToFile(urlStr, filePath) {
@@ -153,7 +174,73 @@ async function downloadUrlToFile(urlStr, filePath) {
     });
 
   await doRequest(urlStr, 0);
+
+  // On Windows, rename fails if destination exists.
+  try {
+    await fs.promises.rm(filePath, { force: true });
+  } catch {
+    /* ignore */
+  }
   await fs.promises.rename(tmpFile, filePath);
+}
+
+async function downloadUrlToFileWithMeta(urlStr, filePath) {
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  const tmpFile = `${filePath}.download-${process.pid}-${Date.now()}`;
+
+  const doRequest = (currentUrl, redirectCount) =>
+    new Promise((resolve, reject) => {
+      if (redirectCount > 5) {
+        reject(new Error('Too many redirects downloading MSAuth.json'));
+        return;
+      }
+
+      https
+        .get(currentUrl, (res) => {
+          const code = res.statusCode || 0;
+          if ([301, 302, 303, 307, 308].includes(code) && res.headers.location) {
+            const nextUrl = new URL(res.headers.location, currentUrl).toString();
+            res.resume();
+            resolve(doRequest(nextUrl, redirectCount + 1));
+            return;
+          }
+
+          if (code < 200 || code >= 300) {
+            res.resume();
+            reject(new Error(`Failed to download MSAuth.json: HTTP ${code}`));
+            return;
+          }
+
+          const out = fs.createWriteStream(tmpFile);
+          res.pipe(out);
+          out.on('finish', () => out.close(() => resolve(res.headers)));
+          out.on('error', (err) => {
+            try {
+              out.close(() => {});
+            } catch {
+              /* ignore */
+            }
+            reject(err);
+          });
+        })
+        .on('error', reject);
+    });
+
+  const headers = await doRequest(urlStr, 0);
+
+  try {
+    await fs.promises.rm(filePath, { force: true });
+  } catch {
+    /* ignore */
+  }
+  await fs.promises.rename(tmpFile, filePath);
+
+  return {
+    downloadedAt: nowIso(),
+    lastModified: headers?.['last-modified'] || null,
+    etag: headers?.etag || null,
+    contentLength: headers?.['content-length'] ? Number(headers['content-length']) : null,
+  };
 }
 
 async function tryBlobUrl({ functionRoot, log }) {
@@ -162,32 +249,45 @@ async function tryBlobUrl({ functionRoot, log }) {
 
   const authPath = getAuthWritePath(functionRoot);
   log(`BlobUrl: downloading from ${safeUrlForLog(blobUrl)} -> ${authPath}`);
-  await downloadUrlToFile(blobUrl, authPath);
+  const meta = await downloadUrlToFileWithMeta(blobUrl, authPath);
   try {
     const stat = await fs.promises.stat(authPath);
     log(`BlobUrl: downloaded bytes=${stat.size}`);
+    if (meta && typeof meta === 'object') meta.bytes = stat.size;
   } catch {
     /* ignore */
   }
 
-  return authPath;
+  return { path: authPath, meta };
 }
 
 async function ensureMSAuthFile(functionRoot, options = {}) {
-  const { strict = false, log } = options;
+  const { strict = false, log, returnInfo = false } = options;
   const logger = makeLogger(log);
 
-  const defaultAuthPath = path.resolve(functionRoot, 'MSAuth.json');
-  if (fs.existsSync(defaultAuthPath)) {
-    logger(`Local: found ${defaultAuthPath}`);
-    return defaultAuthPath;
-  }
+  const toInfo = (value, source, refreshed = false) => {
+    if (!value) return null;
+    if (typeof value === 'string') return { path: value, source: source || 'local', meta: null, refreshed: Boolean(refreshed) };
+    if (typeof value === 'object' && value.path) {
+      return {
+        path: value.path,
+        source: value.source || source || 'unknown',
+        meta: value.meta || null,
+        refreshed: typeof value.refreshed === 'boolean' ? value.refreshed : Boolean(refreshed),
+      };
+    }
+    return null;
+  };
 
+  const formatReturn = (info) => {
+    if (!returnInfo) return info?.path || null;
+    return info;
+  };
+
+  const defaultAuthPath = path.resolve(functionRoot, 'MSAuth.json');
   const authWritePath = getAuthWritePath(functionRoot);
-  if (fs.existsSync(authWritePath)) {
-    logger(`Local: found ${authWritePath}`);
-    return authWritePath;
-  }
+
+  const runningInAzure = Boolean(String(process.env.WEBSITE_INSTANCE_ID || '').trim());
 
   const keyVaultConfigured = Boolean(String(process.env.KEYVAULT_URL || '').trim()) && Boolean(String(process.env.MSAUTH_SECRET_NAME || '').trim());
   // Treat as "configured" only if the user explicitly opted in to blob settings.
@@ -200,7 +300,56 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
       String(process.env.MSAUTH_BLOB_NAME || '').trim(),
   );
 
+  // Azure Functions behavior: if blob is configured, always refresh MSAuth from blob.
+  // This avoids reusing stale auth state between runs.
+  const forceBlobRefresh =
+    runningInAzure &&
+    blobConfigured &&
+    String(process.env.MSAUTH_BLOB_FORCE_REFRESH || '1').trim() !== '0' &&
+    String(process.env.MSAUTH_BLOB_FORCE_REFRESH || '1').trim().toLowerCase() !== 'false';
+
+  if (!forceBlobRefresh) {
+    if (fs.existsSync(defaultAuthPath)) {
+      logger(`Local: found ${defaultAuthPath}`);
+      return formatReturn(toInfo(defaultAuthPath, 'local', false));
+    }
+
+    if (fs.existsSync(authWritePath)) {
+      logger(`Local: found ${authWritePath}`);
+      return formatReturn(toInfo(authWritePath, 'local', false));
+    }
+  } else {
+    logger('Azure: forcing MSAuth refresh from Blob (no cache reuse)');
+  }
+
   const retrievalErrors = [];
+
+  // Forced refresh path: blob first.
+  if (forceBlobRefresh) {
+    if (String(process.env.MSAUTH_BLOB_URL || '').trim()) {
+      const urlResult = await tryBlobUrl({ functionRoot, log: logger }).catch((e) => {
+        retrievalErrors.push(`BlobUrl: ${e?.message || e}`);
+        return null;
+      });
+      if (urlResult?.path) {
+        logger(`BlobUrl: wrote auth to ${urlResult.path}`);
+        return formatReturn(toInfo({ ...urlResult, source: 'blobUrl', refreshed: true }, 'blobUrl', true));
+      }
+    }
+
+    const blobResult = await tryBlob({ functionRoot }).catch((e) => {
+      retrievalErrors.push(`Blob: ${e?.message || e}`);
+      return null;
+    });
+    if (blobResult?.path) {
+      logger(`Blob: wrote auth to ${blobResult.path}`);
+      return formatReturn(toInfo({ ...blobResult, source: 'blob', refreshed: true }, 'blob', true));
+    }
+
+    if (strict && retrievalErrors.length) {
+      throw new Error(`MSAuth.json retrieval failed. ${retrievalErrors.join(' | ')}`);
+    }
+  }
 
   // Prefer Key Vault if configured.
   if (keyVaultConfigured) {
@@ -212,7 +361,7 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
   });
   if (kv) {
     logger(`KeyVault: wrote auth to ${kv}`);
-    return kv;
+    return formatReturn(toInfo({ path: kv, source: 'keyvault', meta: { downloadedAt: nowIso() }, refreshed: true }, 'keyvault', true));
   }
 
   // Then allow direct Blob URL download (often easiest for debugging / public or SAS URL).
@@ -221,7 +370,7 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
       retrievalErrors.push(`BlobUrl: ${e?.message || e}`);
       return null;
     });
-    if (urlResult) return urlResult;
+    if (urlResult?.path) return formatReturn(toInfo({ ...urlResult, source: 'blobUrl', refreshed: true }, 'blobUrl', true));
   }
 
   // Fall back to blob storage.
@@ -240,9 +389,9 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
     retrievalErrors.push(`Blob: ${e?.message || e}`);
     return null;
   });
-  if (blob) {
-    logger(`Blob: wrote auth to ${blob}`);
-    return blob;
+  if (blob?.path) {
+    logger(`Blob: wrote auth to ${blob.path}`);
+    return formatReturn(toInfo({ ...blob, source: 'blob', refreshed: true }, 'blob', true));
   }
 
   if (strict && (keyVaultConfigured || blobConfigured) && retrievalErrors.length) {

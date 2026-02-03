@@ -211,6 +211,7 @@ module.exports = async function (context, req) {
   let authFile = path.resolve(repoRoot, 'MSAuth.json');
 
   const runningOnService = Boolean(process.env.PLAYWRIGHT_SERVICE_URL);
+  const runningInAzure = Boolean(String(process.env.WEBSITE_INSTANCE_ID || '').trim());
   logStep(
     'resolved_paths',
     `repoRoot=${repoRoot} | authFile=${authFile} | runningOnService=${runningOnService}`,
@@ -232,6 +233,30 @@ module.exports = async function (context, req) {
   } else if (!runningOnService && !fs.existsSync(authFile) && fs.existsSync(autoFallbackPath)) {
     authFile = autoFallbackPath;
     logStep('msauth_using_auto_fallback', `path=${authFile}`);
+  }
+
+  // Cloud behavior: always refresh MSAuth.json from the configured source (Blob/KeyVault).
+  // This avoids reusing stale auth state between invocations.
+  if ((runningInAzure || runningOnService) && !envMsAuthPath) {
+    logStep('msauth_force_refresh', `azure=${runningInAzure} workspaces=${runningOnService}`);
+    try {
+      const fetchedInfo = await ensureMSAuthFile(repoRoot, {
+        strict: true,
+        returnInfo: true,
+        log: (msg) => logStep('msauth_fetch', msg),
+      });
+      if (fetchedInfo?.path) {
+        authFile = fetchedInfo.path;
+        logStep('msauth_refreshed', safeJson({ path: fetchedInfo.path, source: fetchedInfo.source, meta: fetchedInfo.meta }));
+      }
+    } catch (e) {
+      logStep('msauth_fetch_failed', safeJson({ message: e?.message || String(e) }));
+      return {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+        body: { ok: false, error: `Failed to refresh MSAuth.json: ${e?.message || e}` },
+      };
+    }
   }
 
   // If the auth file isn't present in the Function App root, try to fetch it.
@@ -315,7 +340,7 @@ module.exports = async function (context, req) {
 
   const browserName = String(process.env.BROWSER || 'edge').trim() || 'edge';
   const headed = process.env.PLAYWRIGHT_SERVICE_URL ? false : String(process.env.HEADED || '1').trim() !== '0';
-  const timeoutMs = 2 * 60 * 1000;
+  const timeoutMs = 5 * 60 * 1000;
 
   logStep(
     'run_config',

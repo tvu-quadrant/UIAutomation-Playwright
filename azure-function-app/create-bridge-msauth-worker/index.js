@@ -43,6 +43,33 @@ function inferPlaywrightLastStep(output) {
   return null;
 }
 
+function toPacificDateTime(isoOrDateHeader) {
+  if (!isoOrDateHeader) return null;
+  const d = new Date(isoOrDateHeader);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  const mm = get('month');
+  const dd = get('day');
+  const yyyy = get('year');
+  const hh = get('hour');
+  const mi = get('minute');
+  const ss = get('second');
+  const tz = get('timeZoneName');
+  if (!mm || !dd || !yyyy || !hh || !mi || !ss) return null;
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}${tz ? ` ${tz}` : ''}`;
+}
+
 module.exports = async function (context, msg) {
   const functionRoot = path.resolve(__dirname, '..');
 
@@ -108,12 +135,12 @@ module.exports = async function (context, msg) {
 
   const browserName = String(parsed?.browserName || process.env.BROWSER || 'edge').trim() || 'edge';
 
-  // For async worker runs, default to 2 minutes unless overridden.
+  // For async worker runs, default to 5 minutes unless overridden.
   const timeoutMs =
     Number(parsed?.timeoutMs) ||
     Number(process.env.FUNCTION_TIMEOUT_MS_ASYNC || '') ||
     Number(process.env.FUNCTION_TIMEOUT_MS || '') ||
-    2 * 60 * 1000;
+    5 * 60 * 1000;
 
   const now = () => new Date().toISOString();
 
@@ -184,10 +211,16 @@ module.exports = async function (context, msg) {
   const authExistedBefore = fs.existsSync(authDefaultPath) || fs.existsSync(authWritePath);
 
   let msAuthPath;
+  let msAuthInfo = null;
   try {
     logStep('msauth_ensure_start');
-    msAuthPath = await ensureMSAuthFile(functionRoot, { strict: true, log: (msg) => logStep('msauth_fetch', msg) });
-    logStep('msauth_ensure_ok', `path=${msAuthPath || ''}`);
+    msAuthInfo = await ensureMSAuthFile(functionRoot, {
+      strict: true,
+      returnInfo: true,
+      log: (msg) => logStep('msauth_fetch', msg),
+    });
+    msAuthPath = msAuthInfo?.path;
+    logStep('msauth_ensure_ok', safeJson({ path: msAuthPath || null, source: msAuthInfo?.source || null, refreshed: msAuthInfo?.refreshed }));
   } catch (e) {
     await safeWriteStatus(runId, {
       runId,
@@ -228,7 +261,7 @@ module.exports = async function (context, msg) {
 
   let msAuthBytes = null;
   let msAuthValidated = false;
-  let msAuthSource = null;
+  let msAuthSource = msAuthInfo?.source || null;
   const authPreexisting = authExistedBefore;
   // User-facing meaning: "we have MSAuth ready" (cached or freshly downloaded).
   const authDownloaded = Boolean(msAuthPath && fs.existsSync(msAuthPath));
@@ -294,6 +327,20 @@ module.exports = async function (context, msg) {
     /* ignore */
   }
 
+  const msAuthVersion = {
+    // Backward-compatible keys
+    downloadedAt: msAuthInfo?.meta?.downloadedAt || null,
+    blobLastModified: msAuthInfo?.meta?.lastModified || null,
+
+    downloadedAtUtc: msAuthInfo?.meta?.downloadedAt || null,
+    downloadedAtPacific: toPacificDateTime(msAuthInfo?.meta?.downloadedAt || null),
+    lastModifiedUtc: msAuthInfo?.meta?.lastModified || null,
+    lastModifiedPacific: toPacificDateTime(msAuthInfo?.meta?.lastModified || null),
+    etag: msAuthInfo?.meta?.etag || null,
+    contentLength: typeof msAuthInfo?.meta?.contentLength === 'number' ? msAuthInfo.meta.contentLength : null,
+    refreshed: typeof msAuthInfo?.refreshed === 'boolean' ? msAuthInfo.refreshed : null,
+  };
+
   // Persist msAuth metadata so callers can see it while the run is still executing.
   await safeWriteStatus(runId, {
     runId,
@@ -313,6 +360,7 @@ module.exports = async function (context, msg) {
       source: msAuthSource,
       bytes: msAuthBytes,
       validated: msAuthValidated,
+      version: msAuthVersion,
     },
     logs: runLogs,
     playwright: {
@@ -352,6 +400,7 @@ module.exports = async function (context, msg) {
       source: msAuthSource,
       bytes: msAuthBytes,
       validated: msAuthValidated,
+      version: msAuthVersion,
     },
     logs: runLogs,
     exitCode: result.code,
