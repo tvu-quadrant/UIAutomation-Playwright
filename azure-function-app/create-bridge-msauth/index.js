@@ -207,6 +207,24 @@ module.exports = async function (context, req) {
     `repoRoot=${repoRoot} | authFile=${authFile} | runningOnService=${runningOnService}`,
   );
 
+  // Local dev convenience: allow using an MSAuth.json outside the Function App folder.
+  // - If MSAUTH_PATH is set and points to an existing file, use it.
+  // - Else if MSAUTH_FALLBACK_PATH is set and exists, use it.
+  // - Else if running locally (no Workspaces) and repo-root MSAuth.json is missing,
+  //   fall back to ../MSAuth.json (workspace root) if present.
+  const envMsAuthPath = String(process.env.MSAUTH_PATH || '').trim();
+  const envFallbackPath = String(process.env.MSAUTH_FALLBACK_PATH || '').trim();
+  const autoFallbackPath = path.resolve(repoRoot, '..', 'MSAuth.json');
+
+  const firstExisting = [envMsAuthPath, envFallbackPath].filter(Boolean).find((p) => fs.existsSync(p));
+  if (firstExisting && firstExisting !== authFile) {
+    authFile = path.resolve(firstExisting);
+    logStep('msauth_using_env_path', `path=${authFile}`);
+  } else if (!runningOnService && !fs.existsSync(authFile) && fs.existsSync(autoFallbackPath)) {
+    authFile = autoFallbackPath;
+    logStep('msauth_using_auto_fallback', `path=${authFile}`);
+  }
+
   // If the auth file isn't present in the Function App root, try to fetch it.
   // This supports cloud deployments where MSAuth.json is stored in Blob or Key Vault.
   if (!fs.existsSync(authFile)) {
