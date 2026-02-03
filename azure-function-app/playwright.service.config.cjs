@@ -2,12 +2,16 @@ const { defineConfig } = require('@playwright/test');
 const { createAzurePlaywrightConfig, ServiceOS } = require('@azure/playwright');
 const { DefaultAzureCredential } = require('@azure/identity');
 
-// Optional local dev support: if a .env exists in this folder, load it.
-try {
-  // eslint-disable-next-line global-require
-  require('dotenv').config();
-} catch {
-  // ignore
+// Optional local dev support only.
+// Cloud runs should use Function App Configuration (App Settings) instead of a .env file.
+// To enable dotenv locally, set: LOAD_DOTENV=1
+if (String(process.env.LOAD_DOTENV || '').trim() === '1') {
+  try {
+    // eslint-disable-next-line global-require
+    require('dotenv').config();
+  } catch {
+    // ignore
+  }
 }
 
 const baseConfig = require('./playwright.config.cjs');

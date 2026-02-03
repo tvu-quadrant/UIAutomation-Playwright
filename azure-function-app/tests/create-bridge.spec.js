@@ -6,8 +6,8 @@ const https = require('https');
 const path = require('path');
 
 // Local dev convenience only: in Azure, use Function App Configuration (App Settings).
-// Avoid calling dotenv in Azure so logs don't claim a .env is being used.
-if (!process.env.WEBSITE_INSTANCE_ID) {
+// Avoid calling dotenv in cloud; enable only when explicitly requested.
+if (String(process.env.LOAD_DOTENV || '').trim() === '1') {
   try {
     require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
   } catch {
@@ -146,7 +146,7 @@ const ensureAuthFile = async () => {
 };
 
 test('search incident and click Create bridge', async ({ browser: pwBrowser }) => {
-  if (!process.env.WEBSITE_INSTANCE_ID && !process.env.INCIDENT_NUMBER) {
+  if (String(process.env.LOAD_DOTENV || '').trim() === '1' && !process.env.INCIDENT_NUMBER) {
     try {
       require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), override: true });
     } catch {

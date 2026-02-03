@@ -35,6 +35,11 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
       ...(msAuthPath ? { MSAUTH_PATH: String(msAuthPath) } : {}),
     };
 
+    // Cloud runs should not use .env files; keep dotenv quiet/disabled if it gets loaded indirectly.
+    env.LOAD_DOTENV = '0';
+    env.DOTENV_CONFIG_QUIET = 'true';
+    env.DOTENV_CONFIG_PATH = env.DOTENV_CONFIG_PATH || '__disabled__.env';
+
     // Always headless in cloud/service.
     if (runningOnService) {
       env.HEADED = '0';
