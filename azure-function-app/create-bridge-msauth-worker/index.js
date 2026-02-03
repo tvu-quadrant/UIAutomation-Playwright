@@ -86,7 +86,7 @@ module.exports = async function (context, msg) {
   let msAuthPath;
   try {
     logStep('msauth_ensure_start');
-    msAuthPath = await ensureMSAuthFile(functionRoot, { strict: true });
+    msAuthPath = await ensureMSAuthFile(functionRoot, { strict: true, log: (msg) => logStep('msauth_fetch', msg) });
     logStep('msauth_ensure_ok', `path=${msAuthPath || ''}`);
   } catch (e) {
     await safeWriteStatus(runId, {

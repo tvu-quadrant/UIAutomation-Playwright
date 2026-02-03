@@ -122,7 +122,7 @@ module.exports = async function (context, req) {
   // Make sure storageState exists (prefer Key Vault secret).
   let msAuthPath;
   try {
-    msAuthPath = await ensureMSAuthFile(functionRoot, { strict: true });
+    msAuthPath = await ensureMSAuthFile(functionRoot, { strict: true, log: (msg) => context.log(`[msauth] ${msg}`) });
   } catch (e) {
     return {
       status: 500,

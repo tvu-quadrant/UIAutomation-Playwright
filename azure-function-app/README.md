@@ -27,6 +27,7 @@ Then open:
 - `http://localhost:7075/api/create-bridge?incidentId=155071351`
 - `http://localhost:7075/api/create-bridge-msauth?incidentId=155071351`
 - `http://localhost:7075/api/create-bridge-workspace?incidentId=155071351`
+- `http://localhost:7075/api/msauth-preflight`
 
 Or open the landing page:
 
@@ -46,6 +47,12 @@ It requires:
 - `PLAYWRIGHT_SERVICE_URL`
 - Azure credentials (locally: `az login`; in Azure: managed identity)
 - `MSAuth.json` (preferably loaded from Key Vault; see below)
+
+You can also verify MSAuth configuration/download without running Playwright:
+
+- `GET /api/msauth-preflight`
+	- By default it attempts to fetch `MSAuth.json` (Key Vault / `MSAUTH_BLOB_URL` / blob settings) and validates JSON shape.
+	- Use `?fetch=0` to only report configuration (no download).
 
 ## Entra login redirect behavior
 

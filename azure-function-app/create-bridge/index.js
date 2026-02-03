@@ -183,7 +183,7 @@ module.exports = async function (context, req) {
   let msAuthPath;
   if (process.env.PLAYWRIGHT_SERVICE_URL) {
     try {
-      msAuthPath = await ensureMSAuthFile(repoRoot, { strict: true });
+      msAuthPath = await ensureMSAuthFile(repoRoot, { strict: true, log: (msg) => context.log(`[msauth] ${msg}`) });
     } catch (e) {
       return {
         status: 500,

@@ -22,6 +22,64 @@ function getBaseUrlFromRequest(req) {
   return `${proto}://${host}`;
 }
 
+function safeUrlForLog(urlStr) {
+  try {
+    const u = new URL(String(urlStr));
+    // Strip query/fragment so SAS tokens aren't exposed.
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+function boolText(v) {
+  return v ? 'Yes' : 'No';
+}
+
+function buildAuthPreflightHtml() {
+  const blobUrl = String(process.env.MSAUTH_BLOB_URL || '').trim();
+  const blobUrlSafe = blobUrl ? safeUrlForLog(blobUrl) : null;
+
+  const hasKeyVault = Boolean(String(process.env.KEYVAULT_URL || '').trim()) && Boolean(String(process.env.MSAUTH_SECRET_NAME || '').trim());
+  const hasBlobSettings = Boolean(
+    String(process.env.MSAUTH_BLOB_CONNECTION || '').trim() ||
+      String(process.env.MSAUTH_BLOB_ACCOUNT_URL || '').trim() ||
+      String(process.env.MSAUTH_BLOB_CONTAINER || '').trim() ||
+      String(process.env.MSAUTH_BLOB_NAME || '').trim(),
+  );
+
+  const runFromPackage = Boolean(String(process.env.WEBSITE_RUN_FROM_PACKAGE || '').trim());
+  const authWritePath = String(process.env.MSAUTH_WRITE_PATH || '').trim() || (runFromPackage ? '(temp folder)' : '(function wwwroot)');
+
+  const items = [
+    { k: 'MSAUTH_BLOB_URL set', v: boolText(Boolean(blobUrl)) },
+    { k: 'MSAUTH_BLOB_URL', v: blobUrlSafe ? escapeHtml(blobUrlSafe) : '<span style="opacity:.7">(not set)</span>' },
+    { k: 'Key Vault configured', v: boolText(hasKeyVault) },
+    { k: 'Blob settings configured', v: boolText(hasBlobSettings) },
+    { k: 'Run-from-package', v: boolText(runFromPackage) },
+    { k: 'MSAuth write path', v: escapeHtml(authWritePath) },
+  ];
+
+  return `
+    <div class="pill" style="flex: 1; min-width: 320px; align-items: flex-start; gap: 10px;">
+      <div style="display:grid; gap:6px;">
+        <div style="font-weight:650; color: rgba(234,240,255,0.92);">Auth preflight</div>
+        <div style="display:grid; gap:6px;">
+          ${items
+            .map(
+              (x) =>
+                `<div style="display:flex; justify-content:space-between; gap:12px; font-size:12px; color: rgba(234,240,255,0.75);"><span>${escapeHtml(
+                  x.k,
+                )}</span><strong style="color: rgba(234,240,255,0.92); font-weight:600;">${x.v}</strong></div>`,
+            )
+            .join('')}
+        </div>
+        <div style="font-size:12px; color: rgba(234,240,255,0.6);">No secrets are downloaded from this page.</div>
+      </div>
+    </div>
+  `;
+}
+
 module.exports = async function (context, req) {
   // Prefer explicit override (useful for local testing or custom domains).
   // Otherwise, derive from the current request so Azure links point at the deployed host.
@@ -34,6 +92,7 @@ module.exports = async function (context, req) {
   const endpointName = String(process.env.CREATE_BRIDGE_ENDPOINT || 'create-bridge-msauth').trim() || 'create-bridge-msauth';
   const endpointUrl = `${baseUrl}/api/${encodeURIComponent(endpointName)}`;
   const createBridgeUrl = (incidentId) => `${endpointUrl}?incidentId=${encodeURIComponent(String(incidentId))}`;
+  const preflightUrl = `${baseUrl}/api/msauth-preflight`;
 
   // Mock incident data (replace later with real source)
   const incidents = [
@@ -80,9 +139,12 @@ module.exports = async function (context, req) {
     .join('');
 
   const template = loadTemplateHtml();
+  const authPreflightHtml = buildAuthPreflightHtml();
   const html = template
     .replaceAll('{{BASE_URL}}', escapeHtml(baseUrl))
     .replaceAll('{{ENDPOINT_URL}}', escapeHtml(endpointUrl))
+    .replaceAll('{{PREFLIGHT_URL}}', escapeHtml(preflightUrl))
+    .replace('{{AUTH_PREFLIGHT}}', authPreflightHtml)
     .replace('{{CARDS}}', cardsHtml);
 
   return {

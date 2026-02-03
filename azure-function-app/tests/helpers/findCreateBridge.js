@@ -7,7 +7,18 @@ class IncidentPage {
   }
 
   async gotoSearch() {
-    await this.page.goto('https://ppeportal.microsofticm.com/imp/v3/overview/main', { waitUntil: 'networkidle' });
+    const url = 'https://ppeportal.microsofticm.com/imp/v3/overview/main';
+
+    // networkidle can hang indefinitely on SPAs with long-polling; prefer domcontentloaded.
+    const resp = await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    try {
+      console.log(`[gotoSearch] navigated url=${this.page.url()} status=${resp ? resp.status() : 'n/a'}`);
+    } catch {
+      /* ignore */
+    }
+
+    // Best-effort settle.
+    await this.page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
 
     // If the site shows login options, click the Microsoft Entra ID option (first choice)
     try {
@@ -16,16 +27,16 @@ class IncidentPage {
       const entraTypo = this.page.locator('text="Micrsosft Entra ID"').first();
       if ((await entraExact.count()) > 0) {
         await entraExact.click({ timeout: 5000 });
-        await this.page.waitForLoadState('networkidle');
+        await this.page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
       } else if ((await entraTypo.count()) > 0) {
         await entraTypo.click({ timeout: 5000 });
-        await this.page.waitForLoadState('networkidle');
+        await this.page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
       } else {
         // Fallback: click any visible tile or element containing 'Entra' (case-insensitive)
         const entraAlt = this.page.locator('text=/Entra ID|Entra/i').first();
         if ((await entraAlt.count()) > 0) {
           await entraAlt.click({ timeout: 5000 });
-          await this.page.waitForLoadState('networkidle');
+          await this.page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
         }
       }
 
@@ -48,6 +59,18 @@ class IncidentPage {
 
       const searchSelector =
         'input[aria-label="Incident search bar input"], input[name="searchText"], input[placeholder*="Search by incident ID" i]';
+
+      // If we hit an interactive login form, MSAuth.json isn't being honored (expired/invalid) or access is blocked.
+      // In cloud runs we can't manually sign in; fail fast with a clear error.
+      const loginForm = await this.page
+        .locator('input[type="email"], input[name="loginfmt"], input[type="password"], input[name="passwd"]')
+        .first()
+        .isVisible()
+        .catch(() => false);
+      if (loginForm) {
+        throw new Error('Detected Entra login form. MSAuth.json may be expired/invalid or conditional access is blocking cloud browsers.');
+      }
+
       if (clicked) {
         try {
           await this.page.waitForSelector(searchSelector, { timeout: 600000 });
@@ -127,7 +150,8 @@ class IncidentPage {
 
   async waitForDetails(incidentNumber) {
     await this.page.waitForURL(new RegExp(`.*incidents/details/${incidentNumber}/.*`), { timeout: 15000 });
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
+    await this.page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
   }
 
   async clickCreateBridge() {

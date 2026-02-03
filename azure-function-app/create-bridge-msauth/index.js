@@ -177,6 +177,15 @@ module.exports = async function (context, req) {
     }
   };
 
+  const safeUrlForLog = (urlStr) => {
+    try {
+      const u = new URL(String(urlStr));
+      return `${u.origin}${u.pathname}`;
+    } catch {
+      return null;
+    }
+  };
+
   logStep('request_received', `invocationId=${context.invocationId}`);
 
   const incidentId =
@@ -230,7 +239,10 @@ module.exports = async function (context, req) {
   if (!fs.existsSync(authFile)) {
     logStep('msauth_missing_local', 'attempting_fetch');
     try {
-      const fetchedPath = await ensureMSAuthFile(repoRoot, { strict: true });
+      const fetchedPath = await ensureMSAuthFile(repoRoot, {
+        strict: true,
+        log: (msg) => logStep('msauth_fetch', msg),
+      });
       if (fetchedPath) {
         logStep('msauth_fetched', `path=${fetchedPath}`);
         authFile = fetchedPath;
@@ -282,12 +294,14 @@ module.exports = async function (context, req) {
         expectedPath: authFile,
         hint: [
           'Provide MSAuth.json via Blob Storage or Key Vault so the Function can download it at runtime.',
+          'Fastest option: set MSAUTH_BLOB_URL to a (public or SAS) URL for the blob.',
           'Blob settings: MSAUTH_BLOB_CONTAINER, MSAUTH_BLOB_NAME (and optionally MSAUTH_BLOB_CONNECTION or MSAUTH_BLOB_ACCOUNT_URL).',
           'Key Vault settings: KEYVAULT_URL, MSAUTH_SECRET_NAME.',
         ].join(' '),
         debug: {
           hasPlaywrightServiceUrl: Boolean(process.env.PLAYWRIGHT_SERVICE_URL),
           hasAzureWebJobsStorage: Boolean(process.env.AzureWebJobsStorage),
+          msAuthBlobUrl: safeUrlForLog(process.env.MSAUTH_BLOB_URL),
           msAuthBlobContainer: process.env.MSAUTH_BLOB_CONTAINER || null,
           msAuthBlobName: process.env.MSAUTH_BLOB_NAME || null,
           hasMsAuthBlobConnection: Boolean(process.env.MSAUTH_BLOB_CONNECTION),

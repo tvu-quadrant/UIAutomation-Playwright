@@ -246,7 +246,11 @@
         </svg>
         <input id="q" placeholder="Filter by id, title, status, owner…" autocomplete="off" />
       </div>
+      <a class="btn" href="{{PREFLIGHT_URL}}" target="_blank" rel="noreferrer" title="Validate MSAuth download/config (no Playwright run)">
+        Auth preflight
+      </a>
       <div class="pill">Tip: set <code>CREATE_BRIDGE_BASE_URL</code> to change host/port</div>
+      {{AUTH_PREFLIGHT}}
     </div>
 
     <div id="grid" class="grid">
