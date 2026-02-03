@@ -20,6 +20,24 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function nowPacific() {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZoneName: 'short',
+    }).format(new Date());
+  } catch {
+    return nowIso();
+  }
+}
+
 function safeJson(value) {
   try {
     return JSON.stringify(value);
@@ -131,8 +149,10 @@ module.exports = async function (context, req) {
         result.authPath = fetchedPath;
         result.authExists = fs.existsSync(fetchedPath);
         result.version = {
-          downloadedAt: fetchedInfo?.meta?.downloadedAt || null,
-          blobLastModified: fetchedInfo?.meta?.lastModified || null,
+          downloadedAtPacific: fetchedInfo?.meta?.downloadedAtPacific || null,
+          downloadedAtUtc: fetchedInfo?.meta?.downloadedAtUtc || null,
+          blobLastModifiedPacific: fetchedInfo?.meta?.blobLastModifiedPacific || null,
+          blobLastModifiedUtc: fetchedInfo?.meta?.blobLastModifiedUtc || null,
           etag: fetchedInfo?.meta?.etag || null,
           contentLength: typeof fetchedInfo?.meta?.contentLength === 'number' ? fetchedInfo.meta.contentLength : null,
           refreshed: typeof fetchedInfo?.refreshed === 'boolean' ? fetchedInfo.refreshed : null,
@@ -213,7 +233,8 @@ module.exports = async function (context, req) {
     headers: { 'content-type': 'application/json' },
     body: {
       ok: true,
-      ts: nowIso(),
+      ts: nowPacific(),
+      tsUtc: nowIso(),
       doFetch,
       config,
       configured,

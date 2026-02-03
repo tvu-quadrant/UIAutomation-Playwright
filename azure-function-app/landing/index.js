@@ -88,8 +88,9 @@ module.exports = async function (context, req) {
   const baseUrl = String(configuredBaseUrl || requestBaseUrl || 'http://localhost:7075').replace(/\/$/, '');
 
   // Which endpoint the landing page should invoke.
-  // Default to the MSAuth test endpoint so cloud users don't hit the manual-auth flow.
-  const endpointName = String(process.env.CREATE_BRIDGE_ENDPOINT || 'create-bridge-msauth').trim() || 'create-bridge-msauth';
+  // Default to the async MSAuth endpoint to avoid HTTP timeouts and enable /run-status polling.
+  const endpointName =
+    String(process.env.CREATE_BRIDGE_ENDPOINT || 'create-bridge-msauth-async').trim() || 'create-bridge-msauth-async';
   const endpointUrl = `${baseUrl}/api/${encodeURIComponent(endpointName)}`;
   const createBridgeUrl = (incidentId) => `${endpointUrl}?incidentId=${encodeURIComponent(String(incidentId))}`;
   const preflightUrl = `${baseUrl}/api/msauth-preflight`;

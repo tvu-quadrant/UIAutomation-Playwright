@@ -30,6 +30,42 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function formatPacific(value) {
+  try {
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    // Includes PST/PDT automatically.
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZoneName: 'short',
+    }).format(d);
+  } catch {
+    return null;
+  }
+}
+
+function buildMeta({ downloadedAtUtc, lastModifiedUtc, etag, contentLength }) {
+  return {
+    // Backward-compatible keys
+    downloadedAt: downloadedAtUtc || null,
+    lastModified: lastModifiedUtc || null,
+
+    downloadedAtUtc: downloadedAtUtc || null,
+    downloadedAtPacific: downloadedAtUtc ? formatPacific(downloadedAtUtc) : null,
+    blobLastModifiedUtc: lastModifiedUtc || null,
+    blobLastModifiedPacific: lastModifiedUtc ? formatPacific(lastModifiedUtc) : null,
+    etag: etag || null,
+    contentLength: typeof contentLength === 'number' ? contentLength : null,
+  };
+}
+
 async function downloadToFile(stream, filePath) {
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
 
@@ -56,7 +92,10 @@ async function tryKeyVault({ functionRoot }) {
 
   const authPath = getAuthWritePath(functionRoot);
   fs.writeFileSync(authPath, secret.value, 'utf8');
-  return authPath;
+  return {
+    path: authPath,
+    meta: buildMeta({ downloadedAtUtc: nowIso(), lastModifiedUtc: null, etag: null, contentLength: null }),
+  };
 }
 
 function getAuthWritePath(functionRoot) {
@@ -122,12 +161,12 @@ async function tryBlob({ functionRoot }) {
 
   return {
     path: authPath,
-    meta: {
-      downloadedAt: nowIso(),
-      lastModified: props?.lastModified ? props.lastModified.toISOString() : null,
+    meta: buildMeta({
+      downloadedAtUtc: nowIso(),
+      lastModifiedUtc: props?.lastModified ? props.lastModified.toISOString() : null,
       etag: props?.etag || null,
       contentLength: typeof props?.contentLength === 'number' ? props.contentLength : null,
-    },
+    }),
   };
 }
 
@@ -235,12 +274,20 @@ async function downloadUrlToFileWithMeta(urlStr, filePath) {
   }
   await fs.promises.rename(tmpFile, filePath);
 
-  return {
-    downloadedAt: nowIso(),
-    lastModified: headers?.['last-modified'] || null,
+  const downloadedAtUtc = nowIso();
+  const lastModifiedHeader = headers?.['last-modified'] || null;
+  let lastModifiedUtc = null;
+  if (lastModifiedHeader) {
+    const d = new Date(lastModifiedHeader);
+    if (!Number.isNaN(d.getTime())) lastModifiedUtc = d.toISOString();
+  }
+
+  return buildMeta({
+    downloadedAtUtc,
+    lastModifiedUtc,
     etag: headers?.etag || null,
     contentLength: headers?.['content-length'] ? Number(headers['content-length']) : null,
-  };
+  });
 }
 
 async function tryBlobUrl({ functionRoot, log }) {
@@ -300,11 +347,14 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
       String(process.env.MSAUTH_BLOB_NAME || '').trim(),
   );
 
+  const hasAzureWebJobsStorage = Boolean(String(process.env.AzureWebJobsStorage || '').trim());
+  const blobPossible = blobConfigured || hasAzureWebJobsStorage;
+
   // Azure Functions behavior: if blob is configured, always refresh MSAuth from blob.
   // This avoids reusing stale auth state between runs.
   const forceBlobRefresh =
     runningInAzure &&
-    blobConfigured &&
+    blobPossible &&
     String(process.env.MSAUTH_BLOB_FORCE_REFRESH || '1').trim() !== '0' &&
     String(process.env.MSAUTH_BLOB_FORCE_REFRESH || '1').trim().toLowerCase() !== 'false';
 
@@ -345,10 +395,6 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
       logger(`Blob: wrote auth to ${blobResult.path}`);
       return formatReturn(toInfo({ ...blobResult, source: 'blob', refreshed: true }, 'blob', true));
     }
-
-    if (strict && retrievalErrors.length) {
-      throw new Error(`MSAuth.json retrieval failed. ${retrievalErrors.join(' | ')}`);
-    }
   }
 
   // Prefer Key Vault if configured.
@@ -360,8 +406,8 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
     return null;
   });
   if (kv) {
-    logger(`KeyVault: wrote auth to ${kv}`);
-    return formatReturn(toInfo({ path: kv, source: 'keyvault', meta: { downloadedAt: nowIso() }, refreshed: true }, 'keyvault', true));
+    logger(`KeyVault: wrote auth to ${kv.path}`);
+    return formatReturn(toInfo({ ...kv, source: 'keyvault', refreshed: true }, 'keyvault', true));
   }
 
   // Then allow direct Blob URL download (often easiest for debugging / public or SAS URL).
