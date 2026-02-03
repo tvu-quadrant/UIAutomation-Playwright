@@ -6,20 +6,66 @@ const { ensureMSAuthFile } = require('../shared/msAuth');
 const { writeRunStatus } = require('../shared/runStatus');
 const { runCreateBridgeMsAuth } = require('../shared/runCreateBridgeMsAuth');
 
+function safeUrlForLog(urlStr) {
+  try {
+    const u = new URL(String(urlStr));
+    // Strip query/fragment so SAS tokens aren't exposed.
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
 function truncate(s, max = 50_000) {
   const str = String(s || '');
   if (str.length <= max) return str;
   return str.slice(0, max) + '\n...<truncated>\n';
 }
 
+function inferPlaywrightLastStep(output) {
+  const text = String(output || '');
+  const lines = text.split(/\r?\n/);
+
+  // Prefer explicit step markers from the test.
+  const stepLines = lines.filter((l) => l.includes('[create-bridge-msauth] step '));
+  if (stepLines.length) return stepLines[stepLines.length - 1].trim();
+
+  // Fallback: any line containing "step X/Y".
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/\bstep\s+\d+\s*\/\s*\d+\b/i.test(lines[i])) return lines[i].trim();
+  }
+
+  // Last non-empty line.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (String(lines[i]).trim()) return String(lines[i]).trim();
+  }
+
+  return null;
+}
+
 module.exports = async function (context, msg) {
   const functionRoot = path.resolve(__dirname, '..');
 
   const t0 = Date.now();
+  const runLogs = [];
+  const pushLog = (name, details) => {
+    const ms = Date.now() - t0;
+    const record = {
+      t: new Date().toISOString(),
+      ms,
+      name: String(name),
+      details: details ? String(details).slice(0, 2000) : null,
+    };
+    runLogs.push(record);
+    // Keep status payload bounded.
+    if (runLogs.length > 250) runLogs.splice(0, runLogs.length - 250);
+  };
+
   const logStep = (name, details) => {
     const ms = Date.now() - t0;
     const detailText = details ? ` | ${details}` : '';
     context.log(`[create-bridge-msauth-worker] +${ms}ms ${name}${detailText}`);
+    pushLog(name, details);
   };
 
   const safeJson = (value) => {
@@ -71,6 +117,36 @@ module.exports = async function (context, msg) {
 
   const now = () => new Date().toISOString();
 
+  const msAuthConfig = {
+    config: {
+      hasWebsiteInstanceId: Boolean(process.env.WEBSITE_INSTANCE_ID),
+      hasPlaywrightServiceUrl: Boolean(process.env.PLAYWRIGHT_SERVICE_URL),
+      runFromPackage: Boolean(String(process.env.WEBSITE_RUN_FROM_PACKAGE || '').trim()),
+
+      msAuthBlobUrl: safeUrlForLog(process.env.MSAUTH_BLOB_URL),
+      msAuthBlobContainer: process.env.MSAUTH_BLOB_CONTAINER || null,
+      msAuthBlobName: process.env.MSAUTH_BLOB_NAME || null,
+      hasMsAuthBlobConnection: Boolean(String(process.env.MSAUTH_BLOB_CONNECTION || '').trim()),
+      msAuthBlobAccountUrl: process.env.MSAUTH_BLOB_ACCOUNT_URL || null,
+
+      keyVaultUrl: process.env.KEYVAULT_URL || null,
+      msAuthSecretName: process.env.MSAUTH_SECRET_NAME || null,
+
+      msAuthWritePathOverride: process.env.MSAUTH_WRITE_PATH || null,
+    },
+    configured: {
+      keyVault:
+        Boolean(String(process.env.KEYVAULT_URL || '').trim()) && Boolean(String(process.env.MSAUTH_SECRET_NAME || '').trim()),
+      blobUrl: Boolean(String(process.env.MSAUTH_BLOB_URL || '').trim()),
+      blob: Boolean(
+        String(process.env.MSAUTH_BLOB_CONNECTION || '').trim() ||
+          String(process.env.MSAUTH_BLOB_ACCOUNT_URL || '').trim() ||
+          String(process.env.MSAUTH_BLOB_CONTAINER || '').trim() ||
+          String(process.env.MSAUTH_BLOB_NAME || '').trim(),
+      ),
+    },
+  };
+
   await safeWriteStatus(runId, {
     runId,
     incidentId: String(incidentId),
@@ -81,6 +157,7 @@ module.exports = async function (context, msg) {
     browserName,
     timeoutMs,
     mode: 'create-bridge-msauth',
+    msAuthConfig,
     msAuth: {
       ensured: false,
       downloaded: null,
@@ -89,6 +166,7 @@ module.exports = async function (context, msg) {
       bytes: null,
       validated: false,
     },
+    logs: runLogs,
   });
 
   logStep('status_set_running', safeJson({ runId, timeoutMs, browserName }));
@@ -121,6 +199,8 @@ module.exports = async function (context, msg) {
       browserName,
       timeoutMs,
       mode: 'create-bridge-msauth',
+      msAuthConfig,
+      logs: runLogs,
       error: `Failed to fetch MSAuth.json: ${e?.message || e}`,
     });
     logStep('msauth_ensure_failed', safeJson({ message: e?.message || String(e) }));
@@ -138,6 +218,8 @@ module.exports = async function (context, msg) {
       browserName,
       timeoutMs,
       mode: 'create-bridge-msauth',
+      msAuthConfig,
+      logs: runLogs,
       error: 'ensureMSAuthFile returned null (no MSAuth.json available).',
     });
     logStep('msauth_missing_after_ensure');
@@ -175,6 +257,7 @@ module.exports = async function (context, msg) {
       browserName,
       timeoutMs,
       mode: 'create-bridge-msauth',
+      msAuthConfig,
       msAuth: {
         ensured: true,
         downloaded: authDownloaded,
@@ -183,6 +266,7 @@ module.exports = async function (context, msg) {
         bytes: msAuthBytes,
         validated: false,
       },
+      logs: runLogs,
       error: `MSAuth.json invalid: ${e?.message || e}`,
     });
     return;
@@ -221,6 +305,7 @@ module.exports = async function (context, msg) {
     browserName,
     timeoutMs,
     mode: 'create-bridge-msauth',
+    msAuthConfig,
     msAuth: {
       ensured: true,
       downloaded: authDownloaded,
@@ -228,6 +313,10 @@ module.exports = async function (context, msg) {
       source: msAuthSource,
       bytes: msAuthBytes,
       validated: msAuthValidated,
+    },
+    logs: runLogs,
+    playwright: {
+      lastStep: null,
     },
   });
 
@@ -255,6 +344,7 @@ module.exports = async function (context, msg) {
     browserName,
     timeoutMs,
     mode: 'create-bridge-msauth',
+    msAuthConfig,
     msAuth: {
       ensured: true,
       downloaded: authDownloaded,
@@ -263,8 +353,12 @@ module.exports = async function (context, msg) {
       bytes: msAuthBytes,
       validated: msAuthValidated,
     },
+    logs: runLogs,
     exitCode: result.code,
     timedOut: Boolean(result.timedOut),
+    playwright: {
+      lastStep: inferPlaywrightLastStep(result.output),
+    },
     output: truncate(result.output),
   });
 

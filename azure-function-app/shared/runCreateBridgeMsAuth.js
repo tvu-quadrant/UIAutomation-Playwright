@@ -64,9 +64,10 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
     const append = (chunk) => {
       if (!chunk) return;
       const str = chunk.toString();
-      if (output.length < maxBytes) {
-        output += str;
-        if (output.length > maxBytes) output = output.slice(0, maxBytes) + '\n...<truncated>\n';
+      // Keep the *tail* so the most recent logs (steps/errors) are preserved.
+      output += str;
+      if (output.length > maxBytes) {
+        output = output.slice(output.length - maxBytes);
       }
     };
 

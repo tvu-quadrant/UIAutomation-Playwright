@@ -7,10 +7,15 @@ function readQuery(req, key) {
 module.exports = async function (context, req) {
   const runId = readQuery(req, 'runId') || readQuery(req, 'id');
   const includeMsAuthRaw = readQuery(req, 'includeMsAuth') || readQuery(req, 'msauth') || readQuery(req, 'includeAuth');
+  const includeLogsRaw = readQuery(req, 'includeLogs') || readQuery(req, 'logs');
   const includeMsAuth =
     String(includeMsAuthRaw || '') === '1' ||
     String(includeMsAuthRaw || '').toLowerCase() === 'true' ||
     String(includeMsAuthRaw || '').toLowerCase() === 'yes';
+  const includeLogs =
+    String(includeLogsRaw || '') === '1' ||
+    String(includeLogsRaw || '').toLowerCase() === 'true' ||
+    String(includeLogsRaw || '').toLowerCase() === 'yes';
   if (!runId) {
     return {
       status: 400,
@@ -39,9 +44,16 @@ module.exports = async function (context, req) {
   }
 
   // By default, omit auth metadata (paths/etc). Add `includeMsAuth=1` to include it.
-  if (!includeMsAuth && status && typeof status === 'object' && 'msAuth' in status) {
+  if (!includeMsAuth && status && typeof status === 'object' && ('msAuth' in status || 'msAuthConfig' in status)) {
     status = { ...status };
     delete status.msAuth;
+    delete status.msAuthConfig;
+  }
+
+  // By default, omit debug logs. Add `includeLogs=1` to include them.
+  if (!includeLogs && status && typeof status === 'object' && 'logs' in status) {
+    status = { ...status };
+    delete status.logs;
   }
 
   return {
