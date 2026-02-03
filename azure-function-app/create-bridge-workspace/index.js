@@ -11,7 +11,7 @@ function readQuery(req, key) {
 function runPlaywright({ functionRoot, incidentId, timeoutMs, msAuthPath }) {
   return new Promise((resolve) => {
     const configPath = path.join(functionRoot, 'playwright.service.config.cjs');
-    const specPath = 'tests/create-bridge.spec.js';
+    const specPath = path.join(functionRoot, 'tests', 'create-bridge.spec.js');
 
     const args = ['test', specPath, `--config=${configPath}`, '--workers=1'];
 
@@ -49,8 +49,18 @@ function runPlaywright({ functionRoot, incidentId, timeoutMs, msAuthPath }) {
     delete env.NODE_OPTIONS;
     delete env.NODE_PATH;
 
+    let cwd = functionRoot;
+    if (msAuthPath) {
+      try {
+        const dir = path.dirname(String(msAuthPath));
+        if (dir && fs.existsSync(dir)) cwd = dir;
+      } catch {
+        /* ignore */
+      }
+    }
+
     const child = spawn(process.execPath, [playwrightCliJs, ...args], {
-      cwd: functionRoot,
+      cwd,
       shell: false,
       env,
     });

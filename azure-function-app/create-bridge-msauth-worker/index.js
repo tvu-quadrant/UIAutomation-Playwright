@@ -214,9 +214,14 @@ module.exports = async function (context, msg) {
   let msAuthInfo = null;
   try {
     logStep('msauth_ensure_start');
+
+    const home = String(process.env.HOME || '').trim();
+    const preferredWritePath = home ? path.join(home, 'data', 'MSAuth.json') : null;
+
     msAuthInfo = await ensureMSAuthFile(functionRoot, {
       strict: true,
       returnInfo: true,
+      writePath: preferredWritePath || undefined,
       log: (msg) => logStep('msauth_fetch', msg),
     });
     msAuthPath = msAuthInfo?.path;
@@ -330,12 +335,14 @@ module.exports = async function (context, msg) {
   const msAuthVersion = {
     // Backward-compatible keys
     downloadedAt: msAuthInfo?.meta?.downloadedAt || null,
-    blobLastModified: msAuthInfo?.meta?.lastModified || null,
+    blobLastModified: msAuthInfo?.meta?.lastModified || msAuthInfo?.meta?.blobLastModifiedUtc || null,
 
-    downloadedAtUtc: msAuthInfo?.meta?.downloadedAt || null,
-    downloadedAtPacific: toPacificDateTime(msAuthInfo?.meta?.downloadedAt || null),
-    lastModifiedUtc: msAuthInfo?.meta?.lastModified || null,
-    lastModifiedPacific: toPacificDateTime(msAuthInfo?.meta?.lastModified || null),
+    downloadedAtUtc: msAuthInfo?.meta?.downloadedAtUtc || msAuthInfo?.meta?.downloadedAt || null,
+    downloadedAtPacific: msAuthInfo?.meta?.downloadedAtPacific || toPacificDateTime(msAuthInfo?.meta?.downloadedAtUtc || msAuthInfo?.meta?.downloadedAt || null),
+    lastModifiedUtc: msAuthInfo?.meta?.blobLastModifiedUtc || msAuthInfo?.meta?.lastModified || null,
+    lastModifiedPacific:
+      msAuthInfo?.meta?.blobLastModifiedPacific ||
+      toPacificDateTime(msAuthInfo?.meta?.blobLastModifiedUtc || msAuthInfo?.meta?.lastModified || null),
     etag: msAuthInfo?.meta?.etag || null,
     contentLength: typeof msAuthInfo?.meta?.contentLength === 'number' ? msAuthInfo.meta.contentLength : null,
     refreshed: typeof msAuthInfo?.refreshed === 'boolean' ? msAuthInfo.refreshed : null,

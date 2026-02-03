@@ -7,8 +7,10 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
     const runningOnService = Boolean(process.env.PLAYWRIGHT_SERVICE_URL);
 
     // Always run the MSAuth test.
-    const configArg = runningOnService ? [`--config=${path.join(functionRoot, 'playwright.service.config.cjs')}`] : [];
-    const args = ['test', 'tests/create-bridge.spec.js', ...configArg, '--workers=1'];
+    const configPath = path.join(functionRoot, 'playwright.service.config.cjs');
+    const specPath = path.join(functionRoot, 'tests', 'create-bridge.spec.js');
+    const configArg = runningOnService ? [`--config=${configPath}`] : [];
+    const args = ['test', specPath, ...configArg, '--workers=1'];
 
     const playwrightCliJsCandidates = [
       path.join(functionRoot, 'node_modules', 'playwright', 'cli.js'),
@@ -35,6 +37,29 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
       ...(msAuthPath ? { MSAUTH_PATH: String(msAuthPath) } : {}),
     };
 
+    // Best-effort: ensure MSAuth.json exists in the Playwright process working directory.
+    // (Some setups/logging expect it in the "workspace root".)
+    let cwd = functionRoot;
+    if (msAuthPath) {
+      try {
+        const dir = path.dirname(String(msAuthPath));
+        if (dir && fs.existsSync(dir)) {
+          const cwdAuthPath = path.join(dir, 'MSAuth.json');
+          if (fs.existsSync(String(msAuthPath)) && path.resolve(String(msAuthPath)) !== path.resolve(cwdAuthPath)) {
+            try {
+              fs.copyFileSync(String(msAuthPath), cwdAuthPath);
+              env.MSAUTH_PATH = cwdAuthPath;
+            } catch {
+              // ignore (read-only dir or permissions)
+            }
+          }
+          cwd = dir;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     // Cloud runs should not use .env files; keep dotenv quiet/disabled if it gets loaded indirectly.
     env.LOAD_DOTENV = '0';
     env.DOTENV_CONFIG_QUIET = 'true';
@@ -50,7 +75,7 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
     delete env.NODE_PATH;
 
     const child = spawn(process.execPath, [playwrightCliJs, ...args], {
-      cwd: functionRoot,
+      cwd,
       shell: false,
       env,
     });

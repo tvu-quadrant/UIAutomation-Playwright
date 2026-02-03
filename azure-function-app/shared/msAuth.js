@@ -80,7 +80,7 @@ async function downloadToFile(stream, filePath) {
   });
 }
 
-async function tryKeyVault({ functionRoot }) {
+async function tryKeyVault({ functionRoot, writePathOverride }) {
   const keyVaultUrl = String(process.env.KEYVAULT_URL || '').trim();
   const secretName = String(process.env.MSAUTH_SECRET_NAME || '').trim();
   if (!keyVaultUrl || !secretName) return null;
@@ -90,7 +90,7 @@ async function tryKeyVault({ functionRoot }) {
   const secret = await client.getSecret(secretName);
   if (!secret?.value) return null;
 
-  const authPath = getAuthWritePath(functionRoot);
+  const authPath = getAuthWritePath(functionRoot, writePathOverride);
   fs.writeFileSync(authPath, secret.value, 'utf8');
   return {
     path: authPath,
@@ -98,9 +98,22 @@ async function tryKeyVault({ functionRoot }) {
   };
 }
 
-function getAuthWritePath(functionRoot) {
+function getAuthWritePath(functionRoot, writePathOverride) {
+  const explicitOverride = String(writePathOverride || '').trim();
+  if (explicitOverride) return path.resolve(explicitOverride);
+
   const explicit = String(process.env.MSAUTH_WRITE_PATH || '').trim();
   if (explicit) return path.resolve(explicit);
+
+  const runningInAzure = Boolean(String(process.env.WEBSITE_INSTANCE_ID || '').trim());
+
+  // In Azure Functions, prefer a stable writable location under HOME.
+  // Windows: typically D:\home
+  // Linux: typically /home
+  if (runningInAzure) {
+    const home = String(process.env.HOME || '').trim();
+    if (home) return path.join(home, 'data', 'MSAuth.json');
+  }
 
   // Zip deploy / run-from-package commonly makes wwwroot read-only.
   const runFromPackage = String(process.env.WEBSITE_RUN_FROM_PACKAGE || '').trim();
@@ -111,7 +124,7 @@ function getAuthWritePath(functionRoot) {
   return path.resolve(functionRoot, 'MSAuth.json');
 }
 
-async function tryBlob({ functionRoot }) {
+async function tryBlob({ functionRoot, writePathOverride }) {
   // Configuration options:
   // - Prefer explicit: MSAUTH_BLOB_CONNECTION (conn string) OR MSAUTH_BLOB_ACCOUNT_URL (for managed identity)
   // - Otherwise fallback to AzureWebJobsStorage conn string if present.
@@ -147,7 +160,7 @@ async function tryBlob({ functionRoot }) {
     throw new Error(`MSAuth blob not found: ${containerName}/${blobName}`);
   }
 
-  const authPath = getAuthWritePath(functionRoot);
+  const authPath = getAuthWritePath(functionRoot, writePathOverride);
 
   let props;
   try {
@@ -290,11 +303,11 @@ async function downloadUrlToFileWithMeta(urlStr, filePath) {
   });
 }
 
-async function tryBlobUrl({ functionRoot, log }) {
+async function tryBlobUrl({ functionRoot, log, writePathOverride }) {
   const blobUrl = String(process.env.MSAUTH_BLOB_URL || '').trim();
   if (!blobUrl) return null;
 
-  const authPath = getAuthWritePath(functionRoot);
+  const authPath = getAuthWritePath(functionRoot, writePathOverride);
   log(`BlobUrl: downloading from ${safeUrlForLog(blobUrl)} -> ${authPath}`);
   const meta = await downloadUrlToFileWithMeta(blobUrl, authPath);
   try {
@@ -309,7 +322,7 @@ async function tryBlobUrl({ functionRoot, log }) {
 }
 
 async function ensureMSAuthFile(functionRoot, options = {}) {
-  const { strict = false, log, returnInfo = false } = options;
+  const { strict = false, log, returnInfo = false, writePath } = options;
   const logger = makeLogger(log);
 
   const toInfo = (value, source, refreshed = false) => {
@@ -332,7 +345,7 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
   };
 
   const defaultAuthPath = path.resolve(functionRoot, 'MSAuth.json');
-  const authWritePath = getAuthWritePath(functionRoot);
+  const authWritePath = getAuthWritePath(functionRoot, writePath);
 
   const runningInAzure = Boolean(String(process.env.WEBSITE_INSTANCE_ID || '').trim());
 
@@ -377,7 +390,7 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
   // Forced refresh path: blob first.
   if (forceBlobRefresh) {
     if (String(process.env.MSAUTH_BLOB_URL || '').trim()) {
-      const urlResult = await tryBlobUrl({ functionRoot, log: logger }).catch((e) => {
+      const urlResult = await tryBlobUrl({ functionRoot, log: logger, writePathOverride: writePath }).catch((e) => {
         retrievalErrors.push(`BlobUrl: ${e?.message || e}`);
         return null;
       });
@@ -387,7 +400,7 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
       }
     }
 
-    const blobResult = await tryBlob({ functionRoot }).catch((e) => {
+    const blobResult = await tryBlob({ functionRoot, writePathOverride: writePath }).catch((e) => {
       retrievalErrors.push(`Blob: ${e?.message || e}`);
       return null;
     });
@@ -395,13 +408,18 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
       logger(`Blob: wrote auth to ${blobResult.path}`);
       return formatReturn(toInfo({ ...blobResult, source: 'blob', refreshed: true }, 'blob', true));
     }
+
+    // In Azure, strict mode means blob refresh must succeed (no cache reuse).
+    if (strict && retrievalErrors.length) {
+      throw new Error(`MSAuth.json retrieval failed. ${retrievalErrors.join(' | ')}`);
+    }
   }
 
   // Prefer Key Vault if configured.
   if (keyVaultConfigured) {
     logger('KeyVault: configured; attempting download');
   }
-  const kv = await tryKeyVault({ functionRoot }).catch((e) => {
+  const kv = await tryKeyVault({ functionRoot, writePathOverride: writePath }).catch((e) => {
     retrievalErrors.push(`KeyVault: ${e?.message || e}`);
     return null;
   });
@@ -412,7 +430,7 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
 
   // Then allow direct Blob URL download (often easiest for debugging / public or SAS URL).
   if (String(process.env.MSAUTH_BLOB_URL || '').trim()) {
-    const urlResult = await tryBlobUrl({ functionRoot, log: logger }).catch((e) => {
+    const urlResult = await tryBlobUrl({ functionRoot, log: logger, writePathOverride: writePath }).catch((e) => {
       retrievalErrors.push(`BlobUrl: ${e?.message || e}`);
       return null;
     });
@@ -431,7 +449,7 @@ async function ensureMSAuthFile(functionRoot, options = {}) {
     );
   }
 
-  const blob = await tryBlob({ functionRoot }).catch((e) => {
+  const blob = await tryBlob({ functionRoot, writePathOverride: writePath }).catch((e) => {
     retrievalErrors.push(`Blob: ${e?.message || e}`);
     return null;
   });
