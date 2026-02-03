@@ -15,9 +15,25 @@ function loadTemplateHtml() {
   return fs.readFileSync(templatePath, 'utf8');
 }
 
+function getBaseUrlFromRequest(req) {
+  const host = req?.headers?.['x-forwarded-host'] || req?.headers?.host;
+  if (!host) return null;
+  const proto = req?.headers?.['x-forwarded-proto'] || 'https';
+  return `${proto}://${host}`;
+}
+
 module.exports = async function (context, req) {
-  const baseUrl = String(process.env.CREATE_BRIDGE_BASE_URL || 'http://localhost:7075').replace(/\/$/, '');
-  const createBridgeUrl = (incidentId) => `${baseUrl}/api/create-bridge?incidentId=${encodeURIComponent(String(incidentId))}`;
+  // Prefer explicit override (useful for local testing or custom domains).
+  // Otherwise, derive from the current request so Azure links point at the deployed host.
+  const configuredBaseUrl = String(process.env.CREATE_BRIDGE_BASE_URL || '').trim();
+  const requestBaseUrl = getBaseUrlFromRequest(req);
+  const baseUrl = String(configuredBaseUrl || requestBaseUrl || 'http://localhost:7075').replace(/\/$/, '');
+
+  // Which endpoint the landing page should invoke.
+  // Default to the MSAuth test endpoint so cloud users don't hit the manual-auth flow.
+  const endpointName = String(process.env.CREATE_BRIDGE_ENDPOINT || 'create-bridge-msauth').trim() || 'create-bridge-msauth';
+  const endpointUrl = `${baseUrl}/api/${encodeURIComponent(endpointName)}`;
+  const createBridgeUrl = (incidentId) => `${endpointUrl}?incidentId=${encodeURIComponent(String(incidentId))}`;
 
   // Mock incident data (replace later with real source)
   const incidents = [
@@ -66,6 +82,7 @@ module.exports = async function (context, req) {
   const template = loadTemplateHtml();
   const html = template
     .replaceAll('{{BASE_URL}}', escapeHtml(baseUrl))
+    .replaceAll('{{ENDPOINT_URL}}', escapeHtml(endpointUrl))
     .replace('{{CARDS}}', cardsHtml);
 
   return {
