@@ -131,7 +131,7 @@ module.exports = async function (context, req) {
     };
   }
 
-  const timeoutMs = Number(process.env.FUNCTION_TIMEOUT_MS || 20 * 60 * 1000);
+  const timeoutMs = 2 * 60 * 1000;
 
   context.log(`Triggering Playwright Workspaces run for incidentId=${incidentId}`);
 

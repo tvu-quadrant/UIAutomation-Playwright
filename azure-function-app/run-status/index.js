@@ -6,6 +6,11 @@ function readQuery(req, key) {
 
 module.exports = async function (context, req) {
   const runId = readQuery(req, 'runId') || readQuery(req, 'id');
+  const includeMsAuthRaw = readQuery(req, 'includeMsAuth') || readQuery(req, 'msauth') || readQuery(req, 'includeAuth');
+  const includeMsAuth =
+    String(includeMsAuthRaw || '') === '1' ||
+    String(includeMsAuthRaw || '').toLowerCase() === 'true' ||
+    String(includeMsAuthRaw || '').toLowerCase() === 'yes';
   if (!runId) {
     return {
       status: 400,
@@ -31,6 +36,12 @@ module.exports = async function (context, req) {
       headers: { 'content-type': 'application/json' },
       body: { ok: false, error: 'Run not found', runId: String(runId) },
     };
+  }
+
+  // By default, omit auth metadata (paths/etc). Add `includeMsAuth=1` to include it.
+  if (!includeMsAuth && status && typeof status === 'object' && 'msAuth' in status) {
+    status = { ...status };
+    delete status.msAuth;
   }
 
   return {

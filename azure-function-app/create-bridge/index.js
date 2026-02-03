@@ -177,7 +177,7 @@ module.exports = async function (context, req) {
 
   const browserName = String(process.env.BROWSER || 'chrome').trim() || 'chrome';
   const headed = process.env.PLAYWRIGHT_SERVICE_URL ? false : String(process.env.HEADED || '1').trim() !== '0';
-  const timeoutMs = Number(process.env.FUNCTION_TIMEOUT_MS || 20 * 60 * 1000);
+  const timeoutMs = 2 * 60 * 1000;
 
   // If running with Playwright Workspaces, ensure MSAuth.json exists (prefer Key Vault secret).
   let msAuthPath;
