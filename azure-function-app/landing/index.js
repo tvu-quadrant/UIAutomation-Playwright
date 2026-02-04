@@ -97,15 +97,15 @@ module.exports = async function (context, req) {
 
   // Mock incident data (replace later with real source)
   const incidents = [
-    { id: 154895666, title: 'IcM: Portal latency spikes', severity: 'Sev2', status: 'Active', owner: 'Eng On-Call', updated: '5m ago' },
-    { id: 154896693, title: 'Bridge audio issues reported', severity: 'Sev3', status: 'Mitigating', owner: 'Teams Ops', updated: '12m ago' },
-    { id: 154895553, title: 'Auth redirect loop (PPE)', severity: 'Sev2', status: 'Active', owner: 'Identity', updated: '18m ago' },
-    { id: 154887055, title: 'Incident timeline missing entries', severity: 'Sev3', status: 'Investigating', owner: 'IcM Platform', updated: '25m ago' },
-    { id: 154941406, title: 'Service health banner incorrect', severity: 'Sev4', status: 'Monitoring', owner: 'Web UX', updated: '1h ago' },
-    { id: 154942057, title: 'Join bridge button flaky', severity: 'Sev3', status: 'Active', owner: 'Automation', updated: '1h ago' },
-    { id: 154941402, title: 'Incident search results stale', severity: 'Sev3', status: 'Mitigating', owner: 'Search', updated: '2h ago' },
-    { id: 154941200, title: 'Create bridge action missing', severity: 'Sev2', status: 'Active', owner: 'IcM UI', updated: '3h ago' },
-    { id: 155005814, title: 'Notifications delayed', severity: 'Sev2', status: 'Investigating', owner: 'Comms', updated: '6h ago' },
+    { id: 154881338, title: 'IcM: Portal latency spikes', severity: 'Sev2', status: 'Active', owner: 'Eng On-Call', updated: '5m ago' },
+    { id: 154881345, title: 'Bridge audio issues reported', severity: 'Sev3', status: 'Mitigating', owner: 'Teams Ops', updated: '12m ago' },
+    { id: 154882641, title: 'Auth redirect loop (PPE)', severity: 'Sev2', status: 'Active', owner: 'Identity', updated: '18m ago' },
+    { id: 154883851, title: 'Incident timeline missing entries', severity: 'Sev3', status: 'Investigating', owner: 'IcM Platform', updated: '25m ago' },
+    { id: 154885022, title: 'Service health banner incorrect', severity: 'Sev4', status: 'Monitoring', owner: 'Web UX', updated: '1h ago' },
+    { id: 154887075, title: 'Join bridge button flaky', severity: 'Sev3', status: 'Active', owner: 'Automation', updated: '1h ago' },
+    { id: 154887209, title: 'Incident search results stale', severity: 'Sev3', status: 'Mitigating', owner: 'Search', updated: '2h ago' },
+    { id: 154938942, title: 'Create bridge action missing', severity: 'Sev2', status: 'Active', owner: 'IcM UI', updated: '3h ago' },
+    { id: 154941249, title: 'Notifications delayed', severity: 'Sev2', status: 'Investigating', owner: 'Comms', updated: '6h ago' },
   ];
 
   const cardsHtml = incidents
@@ -131,7 +131,7 @@ module.exports = async function (context, req) {
             <div class="kv"><span>Owner</span><strong>${escapeHtml(i.owner)}</strong></div>
           </div>
           <div class="actions">
-            <a class="btn" href="${escapeHtml(deepLink)}">Create bridge</a>
+            <a class="btn" href="${escapeHtml(deepLink)}" target="_blank" rel="noopener noreferrer">Create bridge</a>
             <a class="smallLink" href="${escapeHtml(deepLink)}" title="Copy link">Link</a>
           </div>
         </article>
