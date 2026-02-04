@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutMs, msAuthPath }) {
   return new Promise((resolve) => {
@@ -8,7 +9,10 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
 
     // Always run the MSAuth test.
     const configPath = path.join(functionRoot, 'playwright.service.config.cjs');
-    const specPath = path.join(functionRoot, 'tests', 'create-bridge.spec.js');
+    // NOTE: Playwright CLI treats additional args as *regex filters* for test file paths.
+    // Passing an absolute Windows path with backslashes can fail to match due to backslashes being regex escapes.
+    // Use an absolute path with forward slashes so it matches reliably regardless of cwd.
+    const specPath = path.join(functionRoot, 'tests', 'create-bridge.spec.js').replace(/\\/g, '/');
     const configArg = runningOnService ? [`--config=${configPath}`] : [];
     const args = ['test', specPath, ...configArg, '--workers=1'];
 
@@ -37,60 +41,27 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
       ...(msAuthPath ? { MSAUTH_PATH: String(msAuthPath) } : {}),
     };
 
-    // Best-effort: ensure MSAuth.json exists in the Playwright process working directory.
-    // (Some setups/logging expect it in the "workspace root".)
-    let cwd = functionRoot;
+    // Run Playwright from the function root so tests/config resolve consistently.
+    // HTML report output folder is configured to a writable location via playwright.service.config.cjs.
+    const cwd = functionRoot;
     const debug = {
-      cwd: functionRoot,
+      cwd,
       msAuthPathInput: msAuthPath ? String(msAuthPath) : null,
       msAuthPathUsed: msAuthPath ? String(msAuthPath) : null,
       msAuthCopy: {
         attempted: false,
         from: msAuthPath ? String(msAuthPath) : null,
-        to: null,
-        ok: null,
-        error: null,
+        to: msAuthPath ? String(msAuthPath) : null,
+        ok: msAuthPath ? fs.existsSync(String(msAuthPath)) : null,
+        error: msAuthPath ? (fs.existsSync(String(msAuthPath)) ? null : 'source file missing') : null,
+        existsAfter: msAuthPath ? fs.existsSync(String(msAuthPath)) : null,
       },
     };
 
-    if (msAuthPath) {
-      try {
-        const dir = path.dirname(String(msAuthPath));
-        if (dir && fs.existsSync(dir)) {
-          cwd = dir;
-          debug.cwd = dir;
-
-          const cwdAuthPath = path.join(dir, 'MSAuth.json');
-          debug.msAuthCopy.to = cwdAuthPath;
-
-          if (fs.existsSync(String(msAuthPath))) {
-            // Only copy if the file isn't already at the expected name in the cwd.
-            if (path.resolve(String(msAuthPath)) !== path.resolve(cwdAuthPath)) {
-              debug.msAuthCopy.attempted = true;
-              try {
-                fs.copyFileSync(String(msAuthPath), cwdAuthPath);
-                debug.msAuthCopy.ok = true;
-                env.MSAUTH_PATH = cwdAuthPath;
-                debug.msAuthPathUsed = cwdAuthPath;
-              } catch (e) {
-                debug.msAuthCopy.ok = false;
-                debug.msAuthCopy.error = e?.message || String(e);
-              }
-            } else {
-              // Already in place.
-              debug.msAuthCopy.ok = true;
-              env.MSAUTH_PATH = cwdAuthPath;
-              debug.msAuthPathUsed = cwdAuthPath;
-            }
-          } else {
-            debug.msAuthCopy.ok = false;
-            debug.msAuthCopy.error = 'source file missing';
-          }
-        }
-      } catch (e) {
-        debug.msAuthCopy.ok = false;
-        debug.msAuthCopy.error = e?.message || String(e);
-      }
+    // Ensure Playwright writes artifacts to a writable folder in Azure.
+    if (!String(env.PLAYWRIGHT_OUTPUT_DIR || '').trim()) {
+      const base = msAuthPath ? path.dirname(String(msAuthPath)) : String(process.env.HOME || '').trim() || os.tmpdir();
+      env.PLAYWRIGHT_OUTPUT_DIR = path.join(base, 'test-results');
     }
 
     // Cloud runs should not use .env files; keep dotenv quiet/disabled if it gets loaded indirectly.

@@ -4,6 +4,10 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "node",
 
+    "REPORTS_UPLOAD_ENABLED": "1",
+    "REPORTS_BLOB_CONTAINER": "playwright-reports",
+    "REPORTS_PUBLIC_ACCESS": "blob",
+
     "BROWSER": "chrome",
     "MANUAL_AUTH_WAIT_MS": "600000"
   }

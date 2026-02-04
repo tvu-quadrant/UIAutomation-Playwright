@@ -275,7 +275,7 @@ test('search incident and click Create bridge', async ({ browser: pwBrowser }) =
   await incident.selectEngineeringOption();
 
   logStep('step 5/7 click Save');
-  await usedPage.waitForTimeout(2000);
+  await usedPage.waitForTimeout(4000);
   await incident.clickSaveButton();
 
   logStep('step 6/7 wait for success message');

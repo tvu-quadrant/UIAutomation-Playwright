@@ -5,6 +5,7 @@ const fs = require('fs');
 const { ensureMSAuthFile } = require('../shared/msAuth');
 const { writeRunStatus } = require('../shared/runStatus');
 const { runCreateBridgeMsAuth } = require('../shared/runCreateBridgeMsAuth');
+const { uploadPlaywrightHtmlReport, defaultAzureReportDir } = require('../shared/uploadPlaywrightReport');
 
 function safeUrlForLog(urlStr) {
   try {
@@ -349,39 +350,34 @@ module.exports = async function (context, msg) {
   };
 
   // Persist msAuth metadata so callers can see it while the run is still executing.
-  // Also attempt to place a MSAuth.json copy in the Playwright working directory (best-effort)
-  // so callers can see the exact path being used.
-  let plannedCwd = functionRoot;
-  let msAuthPathForPlaywright = msAuthPath;
+  // MSAuth.json is referenced via an absolute MSAUTH_PATH; we don't need to copy it into wwwroot.
+  // Playwright is spawned from the function root; reporters are configured to write artifacts to writable locations.
+  const plannedCwd = functionRoot;
+  const msAuthPathForPlaywright = msAuthPath;
   const authCopy = {
     attempted: false,
     from: msAuthPath,
-    to: null,
+    to: msAuthPath,
     ok: null,
     error: null,
+    existsAfter: null,
   };
 
   try {
-    const dir = path.dirname(String(msAuthPath || ''));
-    if (dir && fs.existsSync(dir)) {
-      plannedCwd = dir;
-      const cwdAuthPath = path.join(dir, 'MSAuth.json');
-      authCopy.to = cwdAuthPath;
-      if (fs.existsSync(String(msAuthPath)) && path.resolve(String(msAuthPath)) !== path.resolve(cwdAuthPath)) {
-        authCopy.attempted = true;
-        fs.copyFileSync(String(msAuthPath), cwdAuthPath);
-        authCopy.ok = true;
-        msAuthPathForPlaywright = cwdAuthPath;
-      } else {
-        // Already in place (or source missing).
-        authCopy.ok = fs.existsSync(cwdAuthPath);
-        msAuthPathForPlaywright = cwdAuthPath;
-      }
-    }
+    authCopy.ok = Boolean(msAuthPathForPlaywright && fs.existsSync(String(msAuthPathForPlaywright)));
+    authCopy.existsAfter = authCopy.ok;
   } catch (e) {
     authCopy.ok = false;
     authCopy.error = e?.message || String(e);
+    authCopy.existsAfter = null;
   }
+
+  const playwrightHost = {
+    platform: process.platform,
+    home: process.env.HOME || null,
+    tmpdir: os.tmpdir(),
+    functionRoot,
+  };
 
   await safeWriteStatus(runId, {
     runId,
@@ -409,8 +405,44 @@ module.exports = async function (context, msg) {
       cwd: plannedCwd,
       msAuthPathUsed: msAuthPathForPlaywright,
       authCopy,
+      host: playwrightHost,
     },
   });
+
+  if (!authCopy.existsAfter) {
+    logStep('msauth_copy_missing', safeJson({ msAuthPathForPlaywright, plannedCwd, authCopy }));
+    await safeWriteStatus(runId, {
+      runId,
+      incidentId: String(incidentId),
+      state: 'failed',
+      createdAt: parsed?.enqueuedAt || now(),
+      endedAt: now(),
+      updatedAt: now(),
+      browserName,
+      timeoutMs,
+      mode: 'create-bridge-msauth',
+      msAuthConfig,
+      msAuth: {
+        ensured: true,
+        downloaded: authDownloaded,
+        preexisting: authPreexisting,
+        source: msAuthSource,
+        bytes: msAuthBytes,
+        validated: msAuthValidated,
+        version: msAuthVersion,
+      },
+      logs: runLogs,
+      playwright: {
+        lastStep: null,
+        cwd: plannedCwd,
+        msAuthPathUsed: msAuthPathForPlaywright,
+        authCopy,
+        host: playwrightHost,
+      },
+      error: `MSAuth.json missing at the path Playwright will use: ${msAuthPathForPlaywright || '(null)'}`,
+    });
+    return;
+  }
 
   logStep('playwright_start', safeJson({ incidentId: String(incidentId), browserName }));
   const result = await runCreateBridgeMsAuth({
@@ -422,6 +454,45 @@ module.exports = async function (context, msg) {
   });
 
   logStep('playwright_done', safeJson({ exitCode: result.code, timedOut: Boolean(result.timedOut) }));
+
+  let reportUpload = null;
+  try {
+    reportUpload = await uploadPlaywrightHtmlReport({
+      runId,
+      reportDir: defaultAzureReportDir(),
+      prefix: `reports/${runId}`,
+    });
+    logStep('report_upload', safeJson(reportUpload));
+  } catch (e) {
+    reportUpload = { ok: false, error: e?.message || String(e) };
+    logStep('report_upload', safeJson(reportUpload));
+  }
+
+  // Post-run diagnostics: verify where the HTML report exists (Workspaces reporter uploads this folder).
+  const htmlReport = (() => {
+    try {
+      const baseHome = String(process.env.HOME || '').trim() || os.tmpdir();
+      const dir = path.join(baseHome, 'data', 'playwright-report');
+      const exists = fs.existsSync(dir);
+      const files = exists
+        ? fs
+            .readdirSync(dir)
+            .slice(0, 25)
+            .map((name) => {
+              const fullPath = path.join(dir, name);
+              try {
+                const stat = fs.statSync(fullPath);
+                return { name, bytes: stat.isFile() ? stat.size : null, isDir: stat.isDirectory() };
+              } catch {
+                return { name, bytes: null, isDir: null };
+              }
+            })
+        : [];
+      return { dir, exists, fileCount: exists ? files.length : 0, files };
+    } catch (e) {
+      return { dir: null, exists: null, error: e?.message || String(e) };
+    }
+  })();
 
   const ok = result.code === 0;
   const state = result.timedOut ? 'timedOut' : ok ? 'succeeded' : 'failed';
@@ -454,7 +525,9 @@ module.exports = async function (context, msg) {
       cwd: result?.debug?.cwd || null,
       msAuthPathUsed: result?.debug?.msAuthPathUsed || null,
       authCopy: result?.debug?.msAuthCopy || null,
+      htmlReport,
     },
+    reportUpload,
     output: truncate(result.output),
   });
 
