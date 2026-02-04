@@ -40,23 +40,56 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
     // Best-effort: ensure MSAuth.json exists in the Playwright process working directory.
     // (Some setups/logging expect it in the "workspace root".)
     let cwd = functionRoot;
+    const debug = {
+      cwd: functionRoot,
+      msAuthPathInput: msAuthPath ? String(msAuthPath) : null,
+      msAuthPathUsed: msAuthPath ? String(msAuthPath) : null,
+      msAuthCopy: {
+        attempted: false,
+        from: msAuthPath ? String(msAuthPath) : null,
+        to: null,
+        ok: null,
+        error: null,
+      },
+    };
+
     if (msAuthPath) {
       try {
         const dir = path.dirname(String(msAuthPath));
         if (dir && fs.existsSync(dir)) {
-          const cwdAuthPath = path.join(dir, 'MSAuth.json');
-          if (fs.existsSync(String(msAuthPath)) && path.resolve(String(msAuthPath)) !== path.resolve(cwdAuthPath)) {
-            try {
-              fs.copyFileSync(String(msAuthPath), cwdAuthPath);
-              env.MSAUTH_PATH = cwdAuthPath;
-            } catch {
-              // ignore (read-only dir or permissions)
-            }
-          }
           cwd = dir;
+          debug.cwd = dir;
+
+          const cwdAuthPath = path.join(dir, 'MSAuth.json');
+          debug.msAuthCopy.to = cwdAuthPath;
+
+          if (fs.existsSync(String(msAuthPath))) {
+            // Only copy if the file isn't already at the expected name in the cwd.
+            if (path.resolve(String(msAuthPath)) !== path.resolve(cwdAuthPath)) {
+              debug.msAuthCopy.attempted = true;
+              try {
+                fs.copyFileSync(String(msAuthPath), cwdAuthPath);
+                debug.msAuthCopy.ok = true;
+                env.MSAUTH_PATH = cwdAuthPath;
+                debug.msAuthPathUsed = cwdAuthPath;
+              } catch (e) {
+                debug.msAuthCopy.ok = false;
+                debug.msAuthCopy.error = e?.message || String(e);
+              }
+            } else {
+              // Already in place.
+              debug.msAuthCopy.ok = true;
+              env.MSAUTH_PATH = cwdAuthPath;
+              debug.msAuthPathUsed = cwdAuthPath;
+            }
+          } else {
+            debug.msAuthCopy.ok = false;
+            debug.msAuthCopy.error = 'source file missing';
+          }
         }
-      } catch {
-        // ignore
+      } catch (e) {
+        debug.msAuthCopy.ok = false;
+        debug.msAuthCopy.error = e?.message || String(e);
       }
     }
 
@@ -81,7 +114,7 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
     });
 
     child.on('error', (err) => {
-      resolve({ code: -3, output: `Failed to start Playwright: ${err?.message || err}`, timedOut: false });
+      resolve({ code: -3, output: `Failed to start Playwright: ${err?.message || err}`, timedOut: false, debug });
     });
 
     let output = '';
@@ -111,7 +144,7 @@ function runCreateBridgeMsAuth({ functionRoot, incidentId, browserName, timeoutM
 
     child.on('close', (code) => {
       clearTimeout(timeout);
-      resolve({ code: code ?? (timedOut ? -1 : -2), output, timedOut });
+      resolve({ code: code ?? (timedOut ? -1 : -2), output, timedOut, debug });
     });
   });
 }

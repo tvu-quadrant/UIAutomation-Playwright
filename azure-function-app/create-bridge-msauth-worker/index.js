@@ -349,6 +349,40 @@ module.exports = async function (context, msg) {
   };
 
   // Persist msAuth metadata so callers can see it while the run is still executing.
+  // Also attempt to place a MSAuth.json copy in the Playwright working directory (best-effort)
+  // so callers can see the exact path being used.
+  let plannedCwd = functionRoot;
+  let msAuthPathForPlaywright = msAuthPath;
+  const authCopy = {
+    attempted: false,
+    from: msAuthPath,
+    to: null,
+    ok: null,
+    error: null,
+  };
+
+  try {
+    const dir = path.dirname(String(msAuthPath || ''));
+    if (dir && fs.existsSync(dir)) {
+      plannedCwd = dir;
+      const cwdAuthPath = path.join(dir, 'MSAuth.json');
+      authCopy.to = cwdAuthPath;
+      if (fs.existsSync(String(msAuthPath)) && path.resolve(String(msAuthPath)) !== path.resolve(cwdAuthPath)) {
+        authCopy.attempted = true;
+        fs.copyFileSync(String(msAuthPath), cwdAuthPath);
+        authCopy.ok = true;
+        msAuthPathForPlaywright = cwdAuthPath;
+      } else {
+        // Already in place (or source missing).
+        authCopy.ok = fs.existsSync(cwdAuthPath);
+        msAuthPathForPlaywright = cwdAuthPath;
+      }
+    }
+  } catch (e) {
+    authCopy.ok = false;
+    authCopy.error = e?.message || String(e);
+  }
+
   await safeWriteStatus(runId, {
     runId,
     incidentId: String(incidentId),
@@ -372,6 +406,9 @@ module.exports = async function (context, msg) {
     logs: runLogs,
     playwright: {
       lastStep: null,
+      cwd: plannedCwd,
+      msAuthPathUsed: msAuthPathForPlaywright,
+      authCopy,
     },
   });
 
@@ -381,7 +418,7 @@ module.exports = async function (context, msg) {
     incidentId,
     browserName,
     timeoutMs,
-    msAuthPath,
+    msAuthPath: msAuthPathForPlaywright,
   });
 
   logStep('playwright_done', safeJson({ exitCode: result.code, timedOut: Boolean(result.timedOut) }));
@@ -414,6 +451,9 @@ module.exports = async function (context, msg) {
     timedOut: Boolean(result.timedOut),
     playwright: {
       lastStep: inferPlaywrightLastStep(result.output),
+      cwd: result?.debug?.cwd || null,
+      msAuthPathUsed: result?.debug?.msAuthPathUsed || null,
+      authCopy: result?.debug?.msAuthCopy || null,
     },
     output: truncate(result.output),
   });
